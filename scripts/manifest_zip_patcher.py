@@ -222,6 +222,12 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
         style_data = bytes(data[style_abs : SP + sp_chunk_size])
 
     new_offsets_bytes = b''.join(struct.pack('<I', o) for o in new_offsets)
+    # Pad fake_blocks to ensure total sp_chunk_size is 4-byte aligned
+    # Android AXML parser requires all chunks to be 4-byte aligned
+    raw_sp_size = sp_hdr_size + len(new_offsets_bytes) + len(new_str_data) + len(fake_blocks) + len(style_data)
+    align_pad   = (4 - raw_sp_size % 4) % 4
+    fake_blocks += b'\x00' * align_pad
+
     new_strings_start = sp_hdr_size + len(new_offsets_bytes)
     new_styles_start  = (new_strings_start + len(new_str_data) + len(fake_blocks)) if style_count > 0 else 0
     new_sp_chunk_size = (sp_hdr_size + len(new_offsets_bytes)
@@ -252,6 +258,9 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
     pad_len = random.randint(PAD_MIN, PAD_MAX)
     result.extend(secrets.token_bytes(pad_len))
     print(f"[manifest_zip_patcher] Step 17F — appended {pad_len} bytes manifest padding")
+
+    # Update AXML file chunk size to reflect 17F padding
+    struct.pack_into('<I', result, 4, len(result))
 
     return bytes(result)
 
