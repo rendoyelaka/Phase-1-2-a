@@ -134,8 +134,13 @@ jobs:
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Nova APK: $NOVA_APK"
           AES_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-          python3 scripts/manifest_zip_patcher.py "$NOVA_APK" "${NOVA_APK}.mzp" "$AES_KEY"
+          python3 -u scripts/manifest_zip_patcher.py "$NOVA_APK" "${NOVA_APK}.mzp" "$AES_KEY" 2>&1
+          if [ ! -f "${NOVA_APK}.mzp" ]; then
+            echo "::error::manifest_zip_patcher did not produce output file"
+            exit 1
+          fi
           mv "${NOVA_APK}.mzp" "$NOVA_APK"
           echo "✅ Steps 17E/17F applied to Nova"
 
