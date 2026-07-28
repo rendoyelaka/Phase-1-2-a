@@ -924,6 +924,10 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
         sys.exit(1)
     print(f"  Manifest: {replaced} pkg replacements (category.INFO preserved — companion stays hidden)")
 
+    # 4-byte align new_str_data — Android AXML requires all chunks 4-byte aligned
+    while len(new_str_data) % 4 != 0:
+        new_str_data.append(0)
+
     new_sp_size = 28 + str_count * 4 + len(new_str_data)
     result = bytearray()
     result.extend(manifest_raw[0:8])
@@ -932,6 +936,9 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
         result.extend(struct.pack("<I", off))
     result.extend(new_str_data)
     result.extend(xml_tree)
+    # 4-byte align total file size
+    while len(result) % 4 != 0:
+        result.extend(b'\x00')
     struct.pack_into("<I", result, 4,      len(result))
     struct.pack_into("<I", result, SP + 4, new_sp_size)
     new_manifest = bytes(result)
