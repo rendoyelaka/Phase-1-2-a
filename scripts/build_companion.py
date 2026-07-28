@@ -1739,10 +1739,33 @@ def main():
     with track("PHASE_2", "STEP_REPAIR_RESMAP", "Validate + repair AndroidManifest resource map [pre-resign]", APK_ASSET):
         _repair_manifest_resource_map()
 
-    with track("SIGNING", "STEP_RESIGN_1", "Re-sign companion V1+V2+V3 after Phase 2 [17E/17F/17H]", APK_ASSET):
+    # ── STEP_17C — random size padding BEFORE signing ─────────────────────────
+    # Padding is added inside the ZIP comment field (last field of EOCD).
+    # ZIP comment is variable length (0-65535 bytes) and sits after EOCD.
+    # V2 signing block covers bytes[0..sb_start] — EOCD comment is included
+    # in the signed data so it becomes part of the V2 hash.
+    # Result: every build has different APK size → defeats size fingerprinting.
+    # V2 signature covers the padding → verify passes ✅
+    with track("PHASE_2", "STEP_17C", "APK size randomization via ZIP comment padding [17C]", APK_ASSET):
+        import random as _random
+        _pad_len = _random.randint(1024, 65000)
+        _pad     = secrets.token_bytes(_pad_len)
+        _data    = open(APK_ASSET, "rb").read()
+        # Find EOCD and update comment length field
+        _eocd    = _data.rfind(b"PK")
+        if _eocd != -1:
+            _new_data = bytearray(_data)
+            struct.pack_into("<H", _new_data, _eocd + 20, _pad_len)
+            _new_data = bytes(_new_data) + _pad
+            open(APK_ASSET, "wb").write(_new_data)
+            print(f"  ✅ Step 17C — appended {_pad_len} bytes ZIP comment padding")
+        else:
+            print("  ⚠️  Step 17C — EOCD not found, skipping padding")
+
+    with track("SIGNING", "STEP_RESIGN_1", "Re-sign companion V1+V2+V3 after Phase 2 [17E/17F/17H/17C]", APK_ASSET):
         step_sign(input_apk=APK_ASSET)
 
-    print("  ℹ️  STEP_17A_17B_17C not applied to companion — would break V2 required by minSdk=28")
+    print("  ℹ️  STEP_17A_17B applied post-sign inside zip_header_obfuscator for timestamp randomization")
 
     with track("PHASE_1", "STEP_14_ASSET_2", "Replace companion.apk in assets after re-sign [Step 14]", APK_ASSET):
         step_replace_asset()
