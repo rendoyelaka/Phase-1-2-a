@@ -157,19 +157,17 @@ jobs:
       - name: "Phase 2 | Steps 17A+17C — ZIP obfuscation (Companion)"
         run: |
           set -e
+          # Steps 17A/17B/17C are NOT applied to companion here.
+          # build_companion.py already handles all Phase 2 processing for companion
+          # and signs it correctly with V1+V2+V3.
+          # Applying zip_header_obfuscator AFTER signing breaks V2 — V2 hashes
+          # all bytes from offset 0 to signing block start, so any post-sign
+          # byte change fails verification. Android minSdk=28 requires V2.
+          # Companion Phase 2 obfuscation is fully handled inside build_companion.py.
+          COMP_APK="app/src/main/assets/companion.apk"
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
-          COMP_APK="app/src/main/assets/companion.apk"
-          # Step 17A — randomize timestamps  (17B skipped — breaks V2 on companion)
-          # Step 17C — random size padding
-          # NOTE: companion is already signed by build_companion.py with V1+V2+V3.
-          # zip_header_obfuscator only patches LFH/CDH timestamps + appends padding
-          # AFTER EOCD — both operations are outside the V2 signing block so V2
-          # remains valid. No re-sign needed.
-          python3 scripts/zip_header_obfuscator.py "$COMP_APK" "${COMP_APK}.obf" --skip-17b
-          mv "${COMP_APK}.obf" "$COMP_APK"
-          apksigner verify --verbose "$COMP_APK"
-          echo "✅ Steps 17A/17C applied to companion — V2 still valid"
+          apksigner verify --verbose "$COMP_APK" && echo "✅ Companion V2 valid"
 
             # ── 9. Show APK info ──────────────────────────────────────────────────────
       - name: Show APK info
