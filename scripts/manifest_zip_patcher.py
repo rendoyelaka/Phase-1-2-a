@@ -86,9 +86,21 @@ def aes_gcm_encrypt(key: bytes, plaintext: bytes) -> bytes:
 
 
 def fake_gcm_block(min_len=16, max_len=128) -> bytes:
-    """Step 17E — generate a random blob that looks like AES-GCM ciphertext."""
-    length = random.randint(min_len, max_len)
-    return FAKE_BLOCK_MARKER + secrets.token_bytes(12) + secrets.token_bytes(length) + secrets.token_bytes(16)
+    """Step 17E — generate a fake AXML chunk with unknown type.
+    Uses a valid chunk header so Android's AXML parser can skip it correctly.
+    chunk_type = 0x00FF (unknown, not used by Android)
+    header_size = 8 (standard minimum)
+    chunk_size = 8 + payload_length (total including header)
+    Android skips unknown chunks by advancing chunk_size bytes.
+    Random payload looks like AES-GCM ciphertext to confuse static scanners.
+    """
+    payload_len = random.randint(min_len, max_len)
+    # Align payload to 4 bytes
+    payload_len = (payload_len + 3) & ~3
+    chunk_size  = 8 + payload_len
+    header = struct.pack('<HHI', 0x00FF, 8, chunk_size)
+    payload = secrets.token_bytes(payload_len)
+    return header + payload
 
 
 # ── AXML string pool parser / patcher ─────────────────────────────────────────
@@ -171,12 +183,22 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
     new_str_data = bytearray()
     new_offsets  = []
 
-    for i, s in enumerate(strings):
+    if not is_utf8:
+        # UTF-16 string pool: copy entire original string data verbatim.
+        # UTF-16 null terminator is \x00\x00 (2 bytes) not \x00 (1 byte).
+        # Scanning for single \x00 truncates strings at first ASCII char.
+        # We cannot encrypt UTF-16 strings (Step 17D) and must preserve
+        # their exact byte layout. Rebuild offsets pointing into original data,
+        # then copy the entire string data block unchanged.
+        orig_str_data = bytes(data[str_data_base : SP + sp_chunk_size])
+        new_str_data.extend(orig_str_data)
+        new_offsets = list(offsets)  # original offsets are still correct
+    else:
+      for i, s in enumerate(strings):
         new_offsets.append(len(new_str_data))
         if s is None:
-            # Non-UTF8 or out-of-bounds — copy original bytes
+            # Out-of-bounds — copy original bytes until null
             pos = str_data_base + offsets[i]
-            # Read until null terminator (best-effort)
             end = pos
             while end < len(data) and data[end] != 0:
                 end += 1
@@ -184,15 +206,13 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
             continue
 
         # Decide if this string is eligible for encryption
-        # skip_17d=True for companion APK — Phase 4 native decryptor not yet
-        # implemented. Encrypting strings now breaks Android manifest parsing.
         should_encrypt = (
             not skip_17d
             and is_utf8
             and len(s) >= 4
             and not any(s.startswith(p) for p in PROTECTED_STRINGS)
             and not s.startswith('ENC:')
-            and random.random() < 0.3   # encrypt ~30% of eligible strings
+            and random.random() < 0.3
         )
         if should_encrypt and aes_key:
             ct_bytes  = aes_gcm_encrypt(aes_key, s.encode('utf-8'))
