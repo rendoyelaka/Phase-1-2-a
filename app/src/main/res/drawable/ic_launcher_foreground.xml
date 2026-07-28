@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer glow ring -->
+    <path
+        android:fillColor="#332979FF"
+        android:pathData="M54,18 C34.12,18 18,34.12 18,54 C18,73.88 34.12,90 54,90 C73.88,90 90,73.88 90,54 C90,34.12 73.88,18 54,18Z" />
+
+    <!-- Main circle -->
+    <path
+        android:fillColor="#FF1565C0"
+        android:pathData="M54,22 C36.33,22 22,36.33 22,54 C22,71.67 36.33,86 54,86 C71.67,86 86,71.67 86,54 C86,36.33 71.67,22 54,22Z" />
+
+    <!-- Inner gradient circle -->
+    <path
+        android:fillColor="#FF2979FF"
+        android:pathData="M54,28 C39.64,28 28,39.64 28,54 C28,68.36 39.64,80 54,80 C68.36,80 80,68.36 80,54 C80,39.64 68.36,28 54,28Z" />
+
+    <!-- Nova star shape - 4-pointed star -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,34 L57.5,50.5 L74,54 L57.5,57.5 L54,74 L50.5,57.5 L34,54 L50.5,50.5 Z" />
+
+    <!-- Center dot -->
+    <path
+        android:fillColor="#FF2979FF"
+        android:pathData="M54,49 C51.24,49 49,51.24 49,54 C49,56.76 51.24,59 54,59 C56.76,59 59,56.76 59,54 C59,51.24 56.76,49 54,49Z" />
+
+    <!-- Small sparkle top-right -->
+    <path
+        android:fillColor="#AAFFFFFF"
+        android:pathData="M72,32 L73.2,36.8 L78,38 L73.2,39.2 L72,44 L70.8,39.2 L66,38 L70.8,36.8 Z" />
+
+    <!-- Small sparkle bottom-left -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M36,64 L36.8,67.2 L40,68 L36.8,68.8 L36,72 L35.2,68.8 L32,68 L35.2,67.2 Z" />
+
+</vector>
