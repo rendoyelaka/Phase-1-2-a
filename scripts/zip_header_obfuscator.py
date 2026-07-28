@@ -48,7 +48,11 @@ PROTECTED_NAMES = {
     "classes3.dex",
     "classes4.dex",
     "resources.arsc",
+    "assets/companion.apk",   # companion APK must not get type 2032
 }
+
+# File extensions that must never get type 2032 — Android linker loads these directly
+PROTECTED_EXTENSIONS = {".so", ".dex", ".arsc"}
 
 # Fake non-standard compression type (Step 17B)
 FAKE_COMPRESS_TYPE = 0x07F0   # 2032 decimal — not a valid ZIP method
@@ -133,6 +137,7 @@ def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False):
         if fn not in PROTECTED_NAMES
         and not fn.startswith('META-INF/')
         and not fn.endswith('/')
+        and not any(fn.endswith(ext) for ext in PROTECTED_EXTENSIONS)
         and cd_entries[fn][1] == 8   # only deflate entries — never stored(0)
     ]
     n_fake = max(1, int(len(eligible) * TYPE_2032_RATIO))
