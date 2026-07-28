@@ -292,30 +292,40 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
     with open(tmp, 'wb') as out:
         cd_entries = []  # central directory entries
         for item, data, is_raw in out_entries:
-            fname = item.filename.encode('utf-8')
-            offset = out.tell()
-            crc    = item.CRC if is_raw else (zipfile.crc32(data) & 0xFFFFFFFF)
-            csz    = item.compress_size if is_raw else (len(data) if item.compress_type == 0 else len(data))
-            usz    = item.file_size
-            ctype  = item.compress_type
-            dt     = item.date_time
+            fname   = item.filename.encode('utf-8')
+            offset  = out.tell()
+            ctype   = item.compress_type
+            dt      = item.date_time
             dosdate = ((dt[0]-1980)<<9)|(dt[1]<<5)|dt[2]
             dostime = (dt[3]<<11)|(dt[4]<<5)|(dt[5]//2)
-            # If not raw and compress_type is deflate, deflate now
-            if not is_raw and ctype == zipfile.ZIP_DEFLATED:
+
+            if is_raw:
+                # Non-standard compression — use original metadata verbatim
+                crc = item.CRC
+                csz = item.compress_size
+                usz = item.file_size
+                out_data = data
+            elif ctype == zipfile.ZIP_DEFLATED:
+                # Compress with raw deflate (strip 2-byte zlib header + 4-byte adler32)
                 import zlib
-                compressed = zlib.compress(data, 6)[2:-4]  # strip zlib header/trailer
-                csz = len(compressed)
-                data = compressed
-            elif not is_raw:
+                out_data = zlib.compress(data, 6)[2:-4]
+                crc = zipfile.crc32(data) & 0xFFFFFFFF
+                csz = len(out_data)
+                usz = len(data)
+            else:
+                # STORED — write uncompressed
+                out_data = data
+                crc = zipfile.crc32(data) & 0xFFFFFFFF
                 csz = len(data)
-            # Local file header
+                usz = len(data)
+
+            # Local file header (30 bytes)
             lfh = struct.pack('<4sHHHHHIIIHH',
                 b'PK\x03\x04', item.extract_version, item.flag_bits,
                 ctype, dostime, dosdate, crc, csz, usz,
                 len(fname), 0)
             out.write(lfh + fname)
-            out.write(data if not is_raw else data)
+            out.write(out_data)
             cd_entries.append((fname, offset, ctype, dostime, dosdate, crc, csz, usz,
                                item.create_system, item.extract_version,
                                item.flag_bits, item.internal_attr, item.external_attr))
