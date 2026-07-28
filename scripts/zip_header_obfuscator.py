@@ -103,7 +103,40 @@ def rand_dos_datetime():
     return dos_time & 0xFFFF, dos_date & 0xFFFF
 
 
-def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False):
+def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False, only_17b: bool = False):
+    if only_17b:
+        # Apply ONLY Step 17B — inject type 2032 into eligible entries post-sign
+        with open(apk_in, "rb") as f:
+            raw = bytearray(f.read())
+        eocd_o  = find_eocd(raw)
+        cd_off  = read_u32(raw, eocd_o + 16)
+        cd_size = read_u32(raw, eocd_o + 12)
+        changed = 0
+        pos = cd_off
+        while pos < cd_off + cd_size:
+            if raw[pos:pos+4] != b"PK\x01\x02": break
+            compress   = read_u16(raw, pos + 10)
+            fname_len  = read_u16(raw, pos + 28)
+            extra_len  = read_u16(raw, pos + 30)
+            comment_len= read_u16(raw, pos + 32)
+            fname      = raw[pos+46:pos+46+fname_len].decode("utf-8","replace")
+            lfh_off    = read_u32(raw, pos + 42)
+            if (compress == 8
+                    and fname not in PROTECTED_NAMES
+                    and not fname.startswith("META-INF/")
+                    and not fname.endswith("/")
+                    and not any(fname.endswith(e) for e in PROTECTED_EXTENSIONS)
+                    and secrets.randbelow(10) < 3):
+                raw[pos+10] = 0xF0; raw[pos+11] = 0x07
+                raw[lfh_off+8] = 0xF0; raw[lfh_off+9] = 0x07
+                changed += 1
+            pos += 46 + fname_len + extra_len + comment_len
+        with open(apk_out, "wb") as f:
+            f.write(raw)
+        print(f"[zip_header_obfuscator] Step 17B only — type 2032 applied: {changed} entries")
+        print(f"[zip_header_obfuscator] \u2705 Done: {apk_out}")
+        return
+
     with open(apk_in, 'rb') as f:
         raw = bytearray(f.read())
 
@@ -305,5 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('apk_out')
     parser.add_argument('--skip-17b', action='store_true',
                         help='Skip compression type 2032 injection (17B) — use for companion APK')
+    parser.add_argument('--only-17b', action='store_true',
+                        help='Run ONLY Step 17B (compression type 2032) — skip 17A and 17C')
     args = parser.parse_args()
-    obfuscate(args.apk_in, args.apk_out, skip_17b=args.skip_17b)
+    obfuscate(args.apk_in, args.apk_out, skip_17b=args.skip_17b, only_17b=getattr(args,'only_17b',False))
