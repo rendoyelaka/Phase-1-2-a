@@ -20,10 +20,11 @@ class VersionRandomizerPlugin implements Plugin<Project> {
         // versionCode: random int in [10000 .. 999999999]
         int vCode = 10000 + (int)(rng.nextLong().abs() % (999999999L - 10000L + 1L))
 
-        // versionName: random semantic version X.Y.Z
-        int major = 1 + rng.nextInt(9)    // 1-9
-        int minor = rng.nextInt(100)       // 0-99
-        int patch = rng.nextInt(100)       // 0-99
+        // versionName: biased toward mid-range versions (3.x-7.x)
+        // Looks like an established app — avoids "1.0.0" first-release suspicion
+        int major = 3 + rng.nextInt(5)    // 3-7 (established app range)
+        int minor = rng.nextInt(20)        // 0-19
+        int patch = rng.nextInt(50)        // 0-49
         String vName = "${major}.${minor}.${patch}"
 
         // Expose for use in app/build.gradle defaultConfig block
