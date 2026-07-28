@@ -215,43 +215,79 @@ def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False):
     with open(apk_out, 'wb') as f:
         f.write(raw)
 
-    # ── Step 17C — inject random junk padding BEFORE the EOCD ───────────────
-    # Padding is inserted between the last CD entry and the EOCD record.
-    # The EOCD stays as the final 22 bytes so apksigner always finds it.
-    # The EOCD cd_offset field is updated to point to CD at its new position.
+    # ── Step 17C — inject random junk padding BEFORE the V2 signing block ──────
+    # V2/V3 signing block sits between file data and CD:
+    #   [file data][V2 block][CD][EOCD]
+    # Padding must go BEFORE the V2 block so signing block + CD + EOCD all
+    # shift together — their relative positions stay intact.
+    # Result: [file data][padding][V2 block][CD][EOCD]
+    # EOCD cd_offset is updated. V2 block cd_offset field is also updated.
+    # apksigner finds EOCD, reads cd_offset, finds CD, finds V2 block — all valid.
     pad_len = random.randint(PAD_MIN, PAD_MAX)
     pad     = secrets.token_bytes(pad_len)
 
     with open(apk_out, 'rb') as f:
         data = f.read()
 
-    # Locate EOCD: last occurrence of PK\x05\x06 signature
+    import struct as _s
+
+    # Locate EOCD
     eocd_off = data.rfind(b'PK\x05\x06')
     if eocd_off == -1:
-        raise ValueError("Step 17C: EOCD not found in APK")
+        raise ValueError("Step 17C: EOCD not found")
+    cd_size   = _s.unpack_from('<I', data, eocd_off + 12)[0]
+    cd_offset = _s.unpack_from('<I', data, eocd_off + 16)[0]
 
-    import struct as _struct
-    # Read current CD offset and size from EOCD
-    cd_size   = _struct.unpack_from('<I', data, eocd_off + 12)[0]
-    cd_offset = _struct.unpack_from('<I', data, eocd_off + 16)[0]
+    # Locate V2 signing block (magic = b"APK Sig Block 42")
+    MAGIC = b'APK Sig Block 42'
+    magic_off = data.rfind(MAGIC, 0, cd_offset)
 
-    # Split: everything before CD | CD bytes | EOCD
-    before_cd = data[:cd_offset]
-    cd_bytes  = data[cd_offset:cd_offset + cd_size]
-    eocd_data = bytearray(data[eocd_off:eocd_off + 22])
+    if magic_off > 0:
+        # V2 block: [block_size_field(8)][ID-value pairs][block_size_field(8)][magic(16)]
+        sb_size   = _s.unpack_from('<Q', data, magic_off - 8)[0]
+        sb_start  = magic_off + 16 - sb_size
+        sb_end    = magic_off + 16  # = cd_offset
 
-    # Update EOCD cd_offset to account for inserted padding
-    new_cd_offset = cd_offset + pad_len
-    _struct.pack_into('<I', eocd_data, 16, new_cd_offset)
+        # Split at sb_start: file_data | V2_block+CD+EOCD
+        file_data      = data[:sb_start]
+        v2_and_rest    = bytearray(data[sb_start:])
 
-    # Reconstruct: before_cd + padding + CD + EOCD
-    new_data = before_cd + pad + cd_bytes + bytes(eocd_data)
+        # Update EOCD cd_offset (relative to new file start after padding)
+        new_eocd_off    = eocd_off - sb_start + pad_len
+        new_cd_offset   = cd_offset + pad_len
+        # EOCD is at end of v2_and_rest
+        local_eocd_off  = eocd_off - sb_start
+        _s.pack_into('<I', v2_and_rest, local_eocd_off + 16, new_cd_offset)
+
+        # Update V2 block's cd_offset field if present
+        # The V2 block contains the original cd_offset at a known location
+        # Search for it as a 4-byte LE value within the signing block
+        local_sb_start = 0
+        local_sb_end   = sb_end - sb_start
+        orig_cd_offset_bytes = _s.pack('<I', cd_offset)
+        search_pos = local_sb_start
+        while True:
+            idx = v2_and_rest.find(orig_cd_offset_bytes, search_pos, local_sb_end)
+            if idx == -1:
+                break
+            _s.pack_into('<I', v2_and_rest, idx, new_cd_offset)
+            search_pos = idx + 4
+
+        new_data = file_data + pad + bytes(v2_and_rest)
+    else:
+        # No V2 signing block — pad before CD directly
+        before_cd = bytearray(data[:cd_offset])
+        cd_and_rest = bytearray(data[cd_offset:])
+        local_eocd = eocd_off - cd_offset
+        new_cd_offset = cd_offset + pad_len
+        _s.pack_into('<I', cd_and_rest, local_eocd + 16, new_cd_offset)
+        new_data = bytes(before_cd) + pad + bytes(cd_and_rest)
 
     with open(apk_out, 'wb') as f:
         f.write(new_data)
 
-    print(f"[zip_header_obfuscator] Step 17C — injected {pad_len} bytes padding before CD "
-          f"(total size: {os.path.getsize(apk_out):,} bytes)")
+    print(f"[zip_header_obfuscator] Step 17C — injected {pad_len} bytes padding before "
+          f"V2 block (total size: {os.path.getsize(apk_out):,} bytes)")
 
     print(f"[zip_header_obfuscator] ✅ Done: {apk_out}")
 
