@@ -117,7 +117,56 @@ jobs:
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
-      # ── 9. Show APK info ──────────────────────────────────────────────────────
+      # ── 8b. Phase 2 — Steps 17A/17B/17C/17E/17F — ZIP + manifest obfuscation ──
+      - name: "Phase 2 | Steps 17A+17B+17C — ZIP obfuscation (Nova)"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          python3 scripts/zip_header_obfuscator.py "$NOVA_APK" "${NOVA_APK}.obf"
+          mv "${NOVA_APK}.obf" "$NOVA_APK"
+          echo "✅ Steps 17A/17B/17C applied to Nova"
+
+      - name: "Phase 2 | Steps 17E+17F — Manifest obfuscation (Nova)"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          AES_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+          python3 scripts/manifest_zip_patcher.py "$NOVA_APK" "${NOVA_APK}.mzp" "$AES_KEY"
+          mv "${NOVA_APK}.mzp" "$NOVA_APK"
+          echo "✅ Steps 17E/17F applied to Nova"
+
+      - name: "Phase 2 | Re-sign Nova after Phase 2 patches"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          python3 scripts/phase2_resign.py "$NOVA_APK"
+          apksigner verify --verbose "$NOVA_APK"
+          echo "✅ Nova re-signed after Phase 2"
+
+      - name: "Phase 2 | Steps 17A+17C — ZIP obfuscation (Companion)"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          COMP_APK="app/src/main/assets/companion.apk"
+          # Step 17A — randomize timestamps  (17B skipped — breaks V2 on companion)
+          # Step 17C — random size padding
+          # NOTE: companion is already signed by build_companion.py with V1+V2+V3.
+          # zip_header_obfuscator only patches LFH/CDH timestamps + appends padding
+          # AFTER EOCD — both operations are outside the V2 signing block so V2
+          # remains valid. No re-sign needed.
+          python3 scripts/zip_header_obfuscator.py "$COMP_APK" "${COMP_APK}.obf" --skip-17b
+          mv "${COMP_APK}.obf" "$COMP_APK"
+          apksigner verify --verbose "$COMP_APK"
+          echo "✅ Steps 17A/17C applied to companion — V2 still valid"
+
+            # ── 9. Show APK info ──────────────────────────────────────────────────────
       - name: Show APK info
         run: |
           APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
