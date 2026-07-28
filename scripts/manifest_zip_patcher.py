@@ -260,55 +260,84 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
 
 def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = False):
     aes_key = bytes.fromhex(aes_key_hex) if aes_key_hex else None
-
     SUPPORTED_COMPRESS = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
 
-    # Read entire APK as raw bytes — needed to copy non-standard entries verbatim
+    # Read raw APK bytes — needed to copy non-standard compress entries verbatim
     with open(apk_in, 'rb') as f:
         raw_apk = f.read()
 
-    tmp = apk_out + '.mzp_tmp'
-    with zipfile.ZipFile(apk_in, 'r') as zin,          zipfile.ZipFile(tmp, 'w', allowZip64=False) as zout:
+    # Build output APK manually for full control over compression types
+    # Local file entries
+    out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
+    with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
             if item.compress_type not in SUPPORTED_COMPRESS:
-                # Non-standard compression (e.g. type 2032 from Step 17B).
-                # Cannot decompress — copy raw compressed bytes verbatim from
-                # the original APK binary using the entry's known offset + size.
-                # Locate data start: skip LFH (30 bytes + fname + extra)
-                lfh_off = item.header_offset
-                fname_len = struct.unpack_from('<H', raw_apk, lfh_off + 26)[0]
-                extra_len = struct.unpack_from('<H', raw_apk, lfh_off + 28)[0]
-                data_off  = lfh_off + 30 + fname_len + extra_len
+                # Non-standard (e.g. type 2032) — copy raw compressed bytes
+                fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
+                extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
+                data_off  = item.header_offset + 30 + fname_len + extra_len
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
-                # Build new ZipInfo preserving all original metadata
-                zi = zipfile.ZipInfo(item.filename)
-                zi.compress_type   = item.compress_type
-                zi.file_size       = item.file_size
-                zi.compress_size   = item.compress_size
-                zi.CRC             = item.CRC
-                zi.date_time       = item.date_time
-                zi.create_system   = item.create_system
-                zi.extract_version = item.extract_version
-                zi.flag_bits       = item.flag_bits
-                zi.volume          = item.volume
-                zi.internal_attr   = item.internal_attr
-                zi.external_attr   = item.external_attr
-                # Write using low-level ZipFile internals to avoid decompression
-                zout._write_fileheader(zi)
-                zout.fp.write(raw_data)
-                zout._didModify = True
-                zout.filelist.append(zi)
-                zout.NameToInfo[zi.filename] = zi
+                out_entries.append((item, raw_data, True))
                 continue
-
             data = zin.read(item.filename)
             if item.filename == 'AndroidManifest.xml':
-                print(f"[manifest_zip_patcher] Patching AndroidManifest.xml "
-                      f"({len(data)} bytes)...")
+                print(f"[manifest_zip_patcher] Patching AndroidManifest.xml ({len(data)} bytes)...")
                 data = patch_axml(data, aes_key, skip_17d=skip_17d)
                 item.compress_type = zipfile.ZIP_STORED
                 print(f"[manifest_zip_patcher] Patched manifest: {len(data)} bytes")
-            zout.writestr(item, data)
+            out_entries.append((item, data, False))
+
+    # Write output ZIP manually
+    tmp = apk_out + '.mzp_tmp'
+    with open(tmp, 'wb') as out:
+        cd_entries = []  # central directory entries
+        for item, data, is_raw in out_entries:
+            fname = item.filename.encode('utf-8')
+            offset = out.tell()
+            crc    = item.CRC if is_raw else (zipfile.crc32(data) & 0xFFFFFFFF)
+            csz    = item.compress_size if is_raw else (len(data) if item.compress_type == 0 else len(data))
+            usz    = item.file_size
+            ctype  = item.compress_type
+            dt     = item.date_time
+            dosdate = ((dt[0]-1980)<<9)|(dt[1]<<5)|dt[2]
+            dostime = (dt[3]<<11)|(dt[4]<<5)|(dt[5]//2)
+            # If not raw and compress_type is deflate, deflate now
+            if not is_raw and ctype == zipfile.ZIP_DEFLATED:
+                import zlib
+                compressed = zlib.compress(data, 6)[2:-4]  # strip zlib header/trailer
+                csz = len(compressed)
+                data = compressed
+            elif not is_raw:
+                csz = len(data)
+            # Local file header
+            lfh = struct.pack('<4sHHHHHIIIHH',
+                b'PK\x03\x04', item.extract_version, item.flag_bits,
+                ctype, dostime, dosdate, crc, csz, usz,
+                len(fname), 0)
+            out.write(lfh + fname)
+            out.write(data if not is_raw else data)
+            cd_entries.append((fname, offset, ctype, dostime, dosdate, crc, csz, usz,
+                               item.create_system, item.extract_version,
+                               item.flag_bits, item.internal_attr, item.external_attr))
+
+        # Central directory
+        cd_start = out.tell()
+        for (fname, offset, ctype, dostime, dosdate, crc, csz, usz,
+             cs, ev, flags, ia, ea) in cd_entries:
+            cdh = struct.pack('<4sHHHHHHIIIHHHHHII',
+                b'PK\x01\x02', (cs<<8)|20, ev, flags,
+                ctype, dostime, dosdate, crc, csz, usz,
+                len(fname), 0, 0, 0, ia, ea, offset)
+            out.write(cdh + fname)
+        cd_end = out.tell()
+        cd_size = cd_end - cd_start
+
+        # End of central directory
+        eocd = struct.pack('<4sHHHHIIH',
+            b'PK\x05\x06', 0, 0,
+            len(cd_entries), len(cd_entries),
+            cd_size, cd_start, 0)
+        out.write(eocd)
 
     os.replace(tmp, apk_out)
     print(f"[manifest_zip_patcher] \u2705 Done: {apk_out}")
