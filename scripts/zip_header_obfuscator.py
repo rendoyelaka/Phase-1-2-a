@@ -245,7 +245,9 @@ def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False):
     if magic_off > 0:
         # V2 block: [block_size_field(8)][ID-value pairs][block_size_field(8)][magic(16)]
         sb_size   = _s.unpack_from('<Q', data, magic_off - 8)[0]
-        sb_start  = magic_off + 16 - sb_size
+        # Per Android spec: sb_size does NOT include the leading 8-byte size field
+        # Total block = sb_size + 8. Correct start = magic_off + 16 - (sb_size + 8)
+        sb_start  = magic_off + 16 - (sb_size + 8)
         sb_end    = magic_off + 16  # = cd_offset
 
         # Split at sb_start: file_data | V2_block+CD+EOCD
