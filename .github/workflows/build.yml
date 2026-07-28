@@ -160,19 +160,13 @@ jobs:
           apksigner verify --verbose "$NOVA_APK"
           echo "✅ Nova re-signed after Phase 2"
 
-      - name: "Phase 2 | Step 17B — Compression type 2032 injection (Nova, post-sign)"
-        run: |
-          set -e
-          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
-          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
-          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          # 17B runs AFTER re-sign — type 2032 entries are NOT covered by V1/V2
-          # signatures so Android installer uses V2 only (which covers everything).
-          # V1 is broken intentionally — this confuses static scanners that check V1.
-          # Android minSdk=28 uses V2 for installation → installs correctly.
-          python3 scripts/zip_header_obfuscator.py "$NOVA_APK" "${NOVA_APK}.17b" --only-17b
-          mv "${NOVA_APK}.17b" "$NOVA_APK"
-          echo "✅ Step 17B applied to Nova (post-sign)"
+      # Step 17B (compression type 2032) is disabled for Nova APK.
+      # V2 signing covers Section 1 (all file data including LFH bytes).
+      # 17B patches LFH compress type fields which are in Section 1.
+      # Any LFH byte change after signing = V2 hash mismatch = Verified failed.
+      # 17B before re-sign breaks V1 (apksigner skips type-2032 in MANIFEST.MF).
+      # 17B after re-sign breaks V2. 17B is incompatible with signed APK.
+      # Scanner confusion from 17B is a Phase 8 feature — deferred.
 
       - name: "Phase 2 | Steps 17A+17C — ZIP obfuscation (Companion)"
         run: |
