@@ -342,3 +342,14 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
     os.replace(tmp, apk_out)
     print(f"[manifest_zip_patcher] \u2705 Done: {apk_out}")
 
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('apk_in')
+    parser.add_argument('apk_out')
+    parser.add_argument('aes_key_hex', nargs='?', default='')
+    parser.add_argument('--skip-17d', action='store_true',
+                        help='Skip string encryption (17D) — needs Phase 4 native layer')
+    args = parser.parse_args()
+    patch_apk(args.apk_in, args.apk_out, args.aes_key_hex, skip_17d=args.skip_17d)
