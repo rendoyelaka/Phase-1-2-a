@@ -207,31 +207,25 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
     else:
         print(f"[manifest_zip_patcher] Step 17D — encrypted {encrypted_count}/{str_count} strings")
 
-    # ── Step 17E — inject fake encrypted blocks after real strings ────────────
-    fake_blocks = bytearray()
-    n_fakes = random.randint(3, 8)
-    for _ in range(n_fakes):
-        fake_blocks.extend(fake_gcm_block())
-    print(f"[manifest_zip_patcher] Step 17E — injected {n_fakes} fake encrypted blocks "
-          f"({len(fake_blocks)} bytes)")
-
-    # ── Rebuild string pool ───────────────────────────────────────────────────
+    # ── Rebuild string pool (NO fake blocks inside — keeps str_count correct) ──
     style_data = b''
     if style_count > 0 and styles_start > 0:
         style_abs  = SP + styles_start
         style_data = bytes(data[style_abs : SP + sp_chunk_size])
 
     new_offsets_bytes = b''.join(struct.pack('<I', o) for o in new_offsets)
-    # Pad fake_blocks to ensure total sp_chunk_size is 4-byte aligned
-    # Android AXML parser requires all chunks to be 4-byte aligned
-    raw_sp_size = sp_hdr_size + len(new_offsets_bytes) + len(new_str_data) + len(fake_blocks) + len(style_data)
-    align_pad   = (4 - raw_sp_size % 4) % 4
-    fake_blocks += b'\x00' * align_pad
+
+    # SP chunk contains ONLY: header + offsets + real strings + styles
+    # 4-byte align the string data so SP chunk size is aligned
+    str_data_bytes = bytes(new_str_data)
+    str_pad = (4 - (sp_hdr_size + len(new_offsets_bytes) + len(str_data_bytes) + len(style_data)) % 4) % 4
+    str_data_bytes += b'\x00' * str_pad
 
     new_strings_start = sp_hdr_size + len(new_offsets_bytes)
-    new_styles_start  = (new_strings_start + len(new_str_data) + len(fake_blocks)) if style_count > 0 else 0
-    new_sp_chunk_size = (sp_hdr_size + len(new_offsets_bytes)
-                         + len(new_str_data) + len(fake_blocks) + len(style_data))
+    new_styles_start  = (new_strings_start + len(str_data_bytes)) if style_count > 0 else 0
+    new_sp_chunk_size = sp_hdr_size + len(new_offsets_bytes) + len(str_data_bytes) + len(style_data)
+
+    assert new_sp_chunk_size % 4 == 0, f"SP chunk not aligned: {new_sp_chunk_size}"
 
     new_sp_hdr = bytearray(sp_hdr_size)
     struct.pack_into('<H', new_sp_hdr,  0, STRING_POOL_TYPE)
@@ -243,15 +237,32 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
     struct.pack_into('<I', new_sp_hdr, 20, new_strings_start)
     struct.pack_into('<I', new_sp_hdr, 24, new_styles_start)
 
-    new_sp = (bytes(new_sp_hdr) + new_offsets_bytes
-              + bytes(new_str_data) + bytes(fake_blocks) + style_data)
+    new_sp = bytes(new_sp_hdr) + new_offsets_bytes + str_data_bytes + style_data
 
-    rest_off    = SP + sp_chunk_size
-    rest        = bytes(data[rest_off:])
-    new_total   = 8 + len(new_sp) + len(rest)
-    result      = bytearray(data[:8])
-    struct.pack_into('<I', result, 4, new_total)   # patch file total size in AXML header
+    # rest = XML tree chunks that follow the string pool in original manifest
+    rest_off = SP + sp_chunk_size
+    rest     = bytes(data[rest_off:])
+
+    # ── Step 17E — inject fake encrypted blocks BETWEEN string pool and XML tree
+    # Placed OUTSIDE the string pool chunk so str_count is never exceeded.
+    # apksigner reads SP chunk up to sp_chunk_size then moves to next chunk.
+    # Fake blocks sit between SP end and XML tree — parsers that expect only
+    # SP+XML tree will get confused; Android installer skips unknown chunks.
+    fake_blocks = bytearray()
+    n_fakes = random.randint(3, 8)
+    for _ in range(n_fakes):
+        fake_blocks.extend(fake_gcm_block())
+    # 4-byte align fake blocks region
+    align_pad = (4 - len(fake_blocks) % 4) % 4
+    fake_blocks += b'\x00' * align_pad
+    print(f"[manifest_zip_patcher] Step 17E — injected {n_fakes} fake encrypted blocks "
+          f"({len(fake_blocks)} bytes)")
+
+    new_total = 8 + len(new_sp) + len(fake_blocks) + len(rest)
+    result    = bytearray(data[:8])
+    struct.pack_into('<I', result, 4, new_total)
     result.extend(new_sp)
+    result.extend(fake_blocks)
     result.extend(rest)
 
     # ── Step 17F — append random binary padding ───────────────────────────────
