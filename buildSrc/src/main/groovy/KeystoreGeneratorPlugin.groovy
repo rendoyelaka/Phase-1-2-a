@@ -4,15 +4,24 @@ import org.gradle.api.Project
 class KeystoreGeneratorPlugin implements Plugin<Project> {
 
     private static final List<String> NAMES = [
+        // Indian names (primary — matches app target market)
+        "Rahul Sharma","Priya Verma","Amit Patel","Sneha Iyer",
+        "Vikram Singh","Deepika Nair","Arjun Mehta","Pooja Gupta",
+        "Kiran Reddy","Suresh Kumar","Ananya Pillai","Ravi Bhatia",
+        "Meena Joshi","Sanjay Dubey","Kavitha Menon","Rohit Yadav",
+        // Western names (secondary — diversity)
         "Alice","Bob","Charlie","David","Eve","Frank","Grace","Hank",
-        "Ivy","Jack","Karen","Leo","Mia","Nina","Oscar","Paul","Quinn",
-        "Rose","Sam","Tina","Uma","Victor","Wendy","Xander","Yara","Zane"
+        "Ivy","Jack","Karen","Leo","Mia","Nina","Oscar","Paul"
     ]
     private static final List<String> ORGS = [
+        // Indian orgs (primary — matches app target market)
+        "Bharat Digital Services","India Tech Solutions",
+        "Desi Apps Studio","Hindustan Mobile Works",
+        "Bharat Soft Labs","IndiaNet Technologies",
+        "Digi Seva Solutions","Sampark Tech India",
+        // Western orgs (secondary — diversity)
         "Acme Corp","Bright Solutions","Cloud Nine","Delta Systems",
         "Echo Labs","Fusion Works","Globe Tech","Horizon Inc",
-        "Infinite Loop","Jade Ventures","Keystone Group","Lunar Systems",
-        "Micro Dynamics","Nexus Corp","Orbit Labs","Peak Solutions",
         "Quantum Works","Rapid Tech","Stellar Inc","Titan Group"
     ]
     private static final List<String> CITIES = [
@@ -27,6 +36,8 @@ class KeystoreGeneratorPlugin implements Plugin<Project> {
         "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ"
     ]
     private static final List<String> COUNTRIES = [
+        // IN weighted 3x — primary target market
+        "IN","IN","IN",
         "US","GB","DE","FR","CA","AU","JP","NL","SE","NO",
         "FI","DK","CH","AT","NZ","SG","IE","BE","IT","ES"
     ]
