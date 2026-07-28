@@ -255,12 +255,21 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
     result.extend(rest)
 
     # ── Step 17F — append random binary padding ───────────────────────────────
+    # Padding length must make total file size 4-byte aligned.
+    # Android AXML parser (and apksigner) require outer file chunk size % 4 == 0.
     pad_len = random.randint(PAD_MIN, PAD_MAX)
+    # Adjust pad_len to ensure final size is 4-byte aligned
+    current_len  = len(result)
+    raw_total    = current_len + pad_len
+    align_extra  = (4 - raw_total % 4) % 4
+    pad_len     += align_extra
     result.extend(secrets.token_bytes(pad_len))
     print(f"[manifest_zip_patcher] Step 17F — appended {pad_len} bytes manifest padding")
 
     # Update AXML file chunk size to reflect 17F padding
-    struct.pack_into('<I', result, 4, len(result))
+    final_size = len(result)
+    assert final_size % 4 == 0, f"AXML not 4-byte aligned: {final_size}"
+    struct.pack_into('<I', result, 4, final_size)
 
     return bytes(result)
 
