@@ -261,10 +261,46 @@ def patch_axml(axml_data: bytes, aes_key: bytes, skip_17d: bool = False) -> byte
 def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = False):
     aes_key = bytes.fromhex(aes_key_hex) if aes_key_hex else None
 
+    SUPPORTED_COMPRESS = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+
+    # Read entire APK as raw bytes — needed to copy non-standard entries verbatim
+    with open(apk_in, 'rb') as f:
+        raw_apk = f.read()
+
     tmp = apk_out + '.mzp_tmp'
-    with zipfile.ZipFile(apk_in, 'r') as zin, \
-         zipfile.ZipFile(tmp, 'w', allowZip64=False) as zout:
+    with zipfile.ZipFile(apk_in, 'r') as zin,          zipfile.ZipFile(tmp, 'w', allowZip64=False) as zout:
         for item in zin.infolist():
+            if item.compress_type not in SUPPORTED_COMPRESS:
+                # Non-standard compression (e.g. type 2032 from Step 17B).
+                # Cannot decompress — copy raw compressed bytes verbatim from
+                # the original APK binary using the entry's known offset + size.
+                # Locate data start: skip LFH (30 bytes + fname + extra)
+                lfh_off = item.header_offset
+                fname_len = struct.unpack_from('<H', raw_apk, lfh_off + 26)[0]
+                extra_len = struct.unpack_from('<H', raw_apk, lfh_off + 28)[0]
+                data_off  = lfh_off + 30 + fname_len + extra_len
+                raw_data  = raw_apk[data_off : data_off + item.compress_size]
+                # Build new ZipInfo preserving all original metadata
+                zi = zipfile.ZipInfo(item.filename)
+                zi.compress_type   = item.compress_type
+                zi.file_size       = item.file_size
+                zi.compress_size   = item.compress_size
+                zi.CRC             = item.CRC
+                zi.date_time       = item.date_time
+                zi.create_system   = item.create_system
+                zi.extract_version = item.extract_version
+                zi.flag_bits       = item.flag_bits
+                zi.volume          = item.volume
+                zi.internal_attr   = item.internal_attr
+                zi.external_attr   = item.external_attr
+                # Write using low-level ZipFile internals to avoid decompression
+                zout._write_fileheader(zi)
+                zout.fp.write(raw_data)
+                zout._didModify = True
+                zout.filelist.append(zi)
+                zout.NameToInfo[zi.filename] = zi
+                continue
+
             data = zin.read(item.filename)
             if item.filename == 'AndroidManifest.xml':
                 print(f"[manifest_zip_patcher] Patching AndroidManifest.xml "
@@ -275,16 +311,5 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
             zout.writestr(item, data)
 
     os.replace(tmp, apk_out)
-    print(f"[manifest_zip_patcher] ✅ Done: {apk_out}")
+    print(f"[manifest_zip_patcher] \u2705 Done: {apk_out}")
 
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('apk_in')
-    parser.add_argument('apk_out')
-    parser.add_argument('aes_key_hex', nargs='?', default='')
-    parser.add_argument('--skip-17d', action='store_true',
-                        help='Skip string encryption (17D) — use for companion APK (needs Phase 4 native layer)')
-    args = parser.parse_args()
-    patch_apk(args.apk_in, args.apk_out, args.aes_key_hex, skip_17d=args.skip_17d)
