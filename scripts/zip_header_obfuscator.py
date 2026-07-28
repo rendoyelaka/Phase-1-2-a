@@ -215,12 +215,42 @@ def obfuscate(apk_in: str, apk_out: str, skip_17b: bool = False):
     with open(apk_out, 'wb') as f:
         f.write(raw)
 
-    # ── Step 17C — append random junk padding after EOCD ─────────────────────
+    # ── Step 17C — inject random junk padding BEFORE the EOCD ───────────────
+    # Padding is inserted between the last CD entry and the EOCD record.
+    # The EOCD stays as the final 22 bytes so apksigner always finds it.
+    # The EOCD cd_offset field is updated to point to CD at its new position.
     pad_len = random.randint(PAD_MIN, PAD_MAX)
     pad     = secrets.token_bytes(pad_len)
-    with open(apk_out, 'ab') as f:
-        f.write(pad)
-    print(f"[zip_header_obfuscator] Step 17C — appended {pad_len} bytes padding "
+
+    with open(apk_out, 'rb') as f:
+        data = f.read()
+
+    # Locate EOCD: last occurrence of PK\x05\x06 signature
+    eocd_off = data.rfind(b'PK\x05\x06')
+    if eocd_off == -1:
+        raise ValueError("Step 17C: EOCD not found in APK")
+
+    import struct as _struct
+    # Read current CD offset and size from EOCD
+    cd_size   = _struct.unpack_from('<I', data, eocd_off + 12)[0]
+    cd_offset = _struct.unpack_from('<I', data, eocd_off + 16)[0]
+
+    # Split: everything before CD | CD bytes | EOCD
+    before_cd = data[:cd_offset]
+    cd_bytes  = data[cd_offset:cd_offset + cd_size]
+    eocd_data = bytearray(data[eocd_off:eocd_off + 22])
+
+    # Update EOCD cd_offset to account for inserted padding
+    new_cd_offset = cd_offset + pad_len
+    _struct.pack_into('<I', eocd_data, 16, new_cd_offset)
+
+    # Reconstruct: before_cd + padding + CD + EOCD
+    new_data = before_cd + pad + cd_bytes + bytes(eocd_data)
+
+    with open(apk_out, 'wb') as f:
+        f.write(new_data)
+
+    print(f"[zip_header_obfuscator] Step 17C — injected {pad_len} bytes padding before CD "
           f"(total size: {os.path.getsize(apk_out):,} bytes)")
 
     print(f"[zip_header_obfuscator] ✅ Done: {apk_out}")
