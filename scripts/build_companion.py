@@ -1428,25 +1428,34 @@ def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
             replacements[base_orig] = base_new
 
     for old_str, new_str in replacements.items():
-        # Replace string constants in smali: const-string v0, "OldName"
-        result = subprocess.run(
-            f'grep -rl "const-string.*\"{old_str}\"" {smali_dir} | wc -l',
-            shell=True, capture_output=True, text=True
+        # Skip very short strings (< 5 chars) — too likely to corrupt unrelated content
+        if len(old_str) < 5:
+            continue
+        # Use grep to check if pattern exists first (avoid unnecessary sed runs)
+        check = subprocess.run(
+            ['grep', '-rl', f'const-string.*"{old_str}"', smali_dir],
+            capture_output=True, text=True
         )
-        count = int(result.stdout.strip() or "0")
-        if count > 0:
-            # Replace const-string using Python (avoids shell quoting issues)
-            for _sf in subprocess.run(f'find {smali_dir} -name "*.smali"',shell=True,capture_output=True,text=True).stdout.strip().split('\n'):
-                if not _sf.strip(): continue
-                try:
-                    with open(_sf.strip(),'r') as _ff: _fc=_ff.read()
-                    _fc2=_fc
-                    for _vx in ['v0','v1','v2','v3','p0','p1']:
-                        _fc2=_fc2.replace(f'const-string {_vx}, "{old_str}"',f'const-string {_vx}, "{new_str}"')
-                    if _fc!=_fc2:
-                        with open(_sf.strip(),'w') as _ff: _ff.write(_fc2)
-                except: pass
-            replaced_total += count
+        if not check.stdout.strip():
+            continue
+        # Replace only in files that actually contain the pattern
+        for fpath in check.stdout.strip().split('\n'):
+            fpath = fpath.strip()
+            if not fpath or not os.path.isfile(fpath):
+                continue
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                fc = f.read()
+            fc2 = fc
+            for vx in ['v0','v1','v2','v3','p0','p1']:
+                fc2 = fc2.replace(
+                    f'const-string {vx}, "{old_str}"',
+                    f'const-string {vx}, "{new_str}"'
+                )
+            if fc != fc2:
+                with open(fpath, 'w', encoding='utf-8') as f:
+                    f.write(fc2)
+                replaced_total += 1
+
 
     print(f"  ✅ Replaced strings in {replaced_total} files")
     return replaced_total
