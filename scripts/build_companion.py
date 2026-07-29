@@ -2242,14 +2242,17 @@ def main():
     with track("PHASE_6", "STEP_6B", "Inject real legitimate smali code snippets"):
         step_6b_inject_legitimate_code(new_pkg)
 
+    # Step 7 must run BEFORE Step 6D (method rename)
+    # because Step 6D renames findByHomeLauncher → resolveInstalledLauncher
+    # and Step 7 searches for "findByHomeLauncher" by name
+    with track("PHASE_1", "STEP_7", "Patch findByHomeLauncher FLAG_SYSTEM check"):
+        step_patch_home_launcher()
+
     with track("PHASE_6", "STEP_6C", "Replace known-bad strings with legitimate equivalents"):
         step_6c_replace_bad_strings(new_pkg, class_rename_map)
 
     with track("PHASE_6", "STEP_6D", "Rename custom methods to legitimate Android-style names"):
         step_6d_rename_methods(new_pkg)
-
-    with track("PHASE_1", "STEP_7", "Patch findByHomeLauncher FLAG_SYSTEM check"):
-        step_patch_home_launcher()
 
     with track("PHASE_1", "STEP_8", "Restore apktool.yml with randomized version"):
         step_restore_apktool_yml(meta)
