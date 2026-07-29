@@ -856,8 +856,10 @@ LEGITIMATE_SMALI_SNIPPETS = [
 
 .method public static hasPermission(Landroid/content/Context;Ljava/lang/String;)Z
     .locals 2
-    const/4 v0, 0x0
-    invoke-static {p0, p1, v0}, Landroidx/core/content/ContextCompat;->checkSelfPermission(Landroid/content/Context;Ljava/lang/String;)I
+    invoke-virtual {p0}, Landroid/content/Context;->getPackageManager()Landroid/content/pm/PackageManager;
+    move-result-object v0
+    const/4 v1, 0x0
+    invoke-virtual {v0, p1, v1}, Landroid/content/pm/PackageManager;->checkPermission(Ljava/lang/String;Ljava/lang/String;)I
     move-result v0
     if-nez v0, :cond_false
     const/4 v0, 0x1
