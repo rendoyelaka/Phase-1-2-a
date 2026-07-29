@@ -973,7 +973,11 @@ def step_6a_rename_classes(new_pkg: str) -> dict:
 
 
 def step_6b_inject_legitimate_code(new_pkg: str) -> int:
-    """Step 6B: Inject real legitimate smali code snippets per build."""
+    """Step 6B: Inject real legitimate smali code snippets per build.
+    Uses ONLY pre-validated hardcoded snippets — no dynamic class generation.
+    Dynamic while-loop class generation causes apktool smali compile errors
+    due to class descriptor resolution issues in apktool 2.9.3.
+    """
     print("\n── Step 6B: Inject real legitimate smali code snippets")
     import random as _random
 
@@ -981,87 +985,415 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
     smali_dir = f"companion_decompiled/smali/{new_path}"
     os.makedirs(smali_dir, exist_ok=True)
 
-    # Use all base snippets + generate variations to reach 50-80 total
-    # Base pool has 10 snippets — always use all, then generate the rest
-    selected = list(LEGITIMATE_SMALI_SNIPPETS)
-    count = _random.randint(50, 80)
-
-    # Generate additional variations by combining/duplicating with unique names
-    suffixes = ["Manager","Handler","Helper","Util","Provider","Service",
-                "Client","Tracker","Monitor","Processor","Executor","Worker",
-                "Controller","Delegate","Adapter","Factory","Builder","Observer",
-                "Listener","Dispatcher","Scheduler","Resolver","Coordinator",
-                "Validator","Transformer","Converter","Encoder","Decoder","Parser",
-                "Formatter","Calculator","Comparator","Iterator","Generator",
-                "Collector","Aggregator","Distributor","Broadcaster","Publisher",
-                "Subscriber","Consumer","Producer","Sender","Receiver",
-                "Loader","Saver","Reader","Writer","Scanner"]
-
-    base_names = ["Data","Content","Resource","Asset","Config","Setting",
-                  "Preference","Cache","Storage","Database","Network","Http",
-                  "Remote","Local","System","App","User","Device","File","Log"]
-
-    injected = 0
-    used_names = set()
-
-    # First inject the base snippets
-    for class_name, smali_content in selected[:count]:
-        unique_name = class_name
-        # Ensure unique name per build by appending random suffix
-        suffix = _random.choice(suffixes)
-        unique_name = f"{class_name}{suffix}"
-        if unique_name in used_names:
-            unique_name = f"{class_name}{suffix}2"
-        used_names.add(unique_name)
-
-        # Replace NEWPKG placeholder with actual package path
-        # Template uses: Lcom/NEWPKG/ClassName;
-        # Target:        L{new_path}/UniqueName;
-        # Do all replacements in correct order — most specific first
-        content = smali_content.replace(
-            f".class public Lcom/NEWPKG/{class_name};",
-            f".class public L{new_path}/{unique_name};"
-        )
-        content = content.replace(
-            f"Lcom/NEWPKG/{class_name};",
-            f"L{new_path}/{unique_name};"
-        )
-        # Replace any remaining NEWPKG references (e.g. in method descriptors)
-        content = content.replace("Lcom/NEWPKG/", f"L{new_path}/")
-        # Replace source file name
-        content = content.replace(f'"{class_name}.java"', f'"{unique_name}.java"')
-
-        out_path = f"{smali_dir}/{unique_name}.smali"
-        with open(out_path, "w") as f:
-            f.write(content)
-        injected += 1
-
-    # Generate additional simple helper classes to reach 50-80 count
-    while injected < count:
-        base = _random.choice(base_names)
-        suf  = _random.choice(suffixes)
-        name = f"{base}{suf}"
-        if name in used_names:
-            name = f"{base}{suf}Impl"
-        if name in used_names:
-            continue
-        used_names.add(name)
-
-        # Minimal smali class — constructor only
-        # apktool 2.9.3 has issues with static methods in generated classes
-        # Using only constructor guarantees clean compilation every time
-        content = f""".class public L{new_path}/{name};
+    # All snippets are pre-validated — no dynamic generation
+    # Each snippet uses only android.* classes (no androidx dependencies)
+    # No self-referencing return types (causes apktool forward-reference errors)
+    # Constructor-only or simple primitive-return methods only
+    ALL_SNIPPETS = [
+        ("SharedPreferenceHelper", """.class public L{P}/{N};
 .super Ljava/lang/Object;
-.source "{name}.java"
-
+.source "{N}.java"
 .method public constructor <init>()V
     .locals 0
-    invoke-direct {{p0}}, Ljava/lang/Object;-><init>()V
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static putString(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V
+    .locals 3
+    const/4 v0, 0x0
+    invoke-virtual {p0, p1, v0}, Landroid/content/Context;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
+    move-result-object v0
+    invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+    move-result-object v1
+    invoke-interface {v1, p1, p2}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+    move-result-object v2
+    invoke-interface {v2}, Landroid/content/SharedPreferences$Editor;->apply()V
     return-void
 .end method
 .end class
-"""
-        out_path = f"{smali_dir}/{name}.smali"
+"""),
+        ("NetworkStateHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static isConnected(Landroid/content/Context;)Z
+    .locals 3
+    const-string v0, "connectivity"
+    invoke-virtual {p0, v0}, Landroid/content/Context;->getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+    move-result-object v0
+    check-cast v0, Landroid/net/ConnectivityManager;
+    if-eqz v0, :cond_false
+    invoke-virtual {v0}, Landroid/net/ConnectivityManager;->getActiveNetworkInfo()Landroid/net/NetworkInfo;
+    move-result-object v1
+    if-eqz v1, :cond_false
+    invoke-virtual {v1}, Landroid/net/NetworkInfo;->isConnected()Z
+    move-result v2
+    return v2
+    :cond_false
+    const/4 v0, 0x0
+    return v0
+.end method
+.end class
+"""),
+        ("DeviceInfoHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static getModel()Ljava/lang/String;
+    .locals 1
+    sget-object v0, Landroid/os/Build;->MODEL:Ljava/lang/String;
+    return-object v0
+.end method
+.method public static getSdkVersion()I
+    .locals 1
+    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+    return v0
+.end method
+.end class
+"""),
+        ("StringHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static isEmpty(Ljava/lang/String;)Z
+    .locals 1
+    if-eqz p0, :cond_true
+    invoke-virtual {p0}, Ljava/lang/String;->length()I
+    move-result v0
+    if-nez v0, :cond_false
+    :cond_true
+    const/4 v0, 0x1
+    return v0
+    :cond_false
+    const/4 v0, 0x0
+    return v0
+.end method
+.end class
+"""),
+        ("TimestampHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static currentMillis()J
+    .locals 2
+    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+    move-result-wide v0
+    return-wide v0
+.end method
+.end class
+"""),
+        ("CacheHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static getCacheDir(Landroid/content/Context;)Ljava/io/File;
+    .locals 1
+    invoke-virtual {p0}, Landroid/content/Context;->getCacheDir()Ljava/io/File;
+    move-result-object v0
+    return-object v0
+.end method
+.end class
+"""),
+        ("BatteryHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static isCharging(Landroid/content/Context;)Z
+    .locals 2
+    const-string v0, "power"
+    invoke-virtual {p0, v0}, Landroid/content/Context;->getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+    move-result-object v0
+    check-cast v0, Landroid/os/PowerManager;
+    if-eqz v0, :cond_false
+    const/4 v1, 0x1
+    return v1
+    :cond_false
+    const/4 v0, 0x0
+    return v0
+.end method
+.end class
+"""),
+        ("PackageHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static getPackageName(Landroid/content/Context;)Ljava/lang/String;
+    .locals 1
+    invoke-virtual {p0}, Landroid/content/Context;->getPackageName()Ljava/lang/String;
+    move-result-object v0
+    return-object v0
+.end method
+.end class
+"""),
+        ("FileHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static exists(Ljava/lang/String;)Z
+    .locals 2
+    new-instance v0, Ljava/io/File;
+    invoke-direct {v0, p0}, Ljava/io/File;-><init>(Ljava/lang/String;)V
+    invoke-virtual {v0}, Ljava/io/File;->exists()Z
+    move-result v1
+    return v1
+.end method
+.end class
+"""),
+        ("LogHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static debug(Ljava/lang/String;Ljava/lang/String;)V
+    .locals 0
+    invoke-static {p0, p1}, Landroid/util/Log;->d(Ljava/lang/String;Ljava/lang/String;)I
+    return-void
+.end method
+.end class
+"""),
+        ("WakeLockHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static isScreenOn(Landroid/content/Context;)Z
+    .locals 2
+    const-string v0, "power"
+    invoke-virtual {p0, v0}, Landroid/content/Context;->getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+    move-result-object v0
+    check-cast v0, Landroid/os/PowerManager;
+    if-eqz v0, :cond_false
+    invoke-virtual {v0}, Landroid/os/PowerManager;->isInteractive()Z
+    move-result v1
+    return v1
+    :cond_false
+    const/4 v0, 0x0
+    return v0
+.end method
+.end class
+"""),
+        ("VersionHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static getSdkInt()I
+    .locals 1
+    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+    return v0
+.end method
+.method public static getRelease()Ljava/lang/String;
+    .locals 1
+    sget-object v0, Landroid/os/Build$VERSION;->RELEASE:Ljava/lang/String;
+    return-object v0
+.end method
+.end class
+"""),
+        ("IntentHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static createIntent(Ljava/lang/String;)Landroid/content/Intent;
+    .locals 1
+    new-instance v0, Landroid/content/Intent;
+    invoke-direct {v0, p0}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V
+    return-object v0
+.end method
+.end class
+"""),
+        ("HashHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static hashCode(Ljava/lang/String;)I
+    .locals 1
+    invoke-virtual {p0}, Ljava/lang/String;->hashCode()I
+    move-result v0
+    return v0
+.end method
+.end class
+"""),
+        ("ArrayHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static size(Ljava/util/List;)I
+    .locals 1
+    if-eqz p0, :cond_zero
+    invoke-interface {p0}, Ljava/util/List;->size()I
+    move-result v0
+    return v0
+    :cond_zero
+    const/4 v0, 0x0
+    return v0
+.end method
+.end class
+"""),
+        ("NumberHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static parseInt(Ljava/lang/String;)I
+    .locals 1
+    invoke-static {p0}, Ljava/lang/Integer;->parseInt(Ljava/lang/String;)I
+    move-result v0
+    return v0
+.end method
+.end class
+"""),
+        ("MapHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static create()Ljava/util/HashMap;
+    .locals 1
+    new-instance v0, Ljava/util/HashMap;
+    invoke-direct {v0}, Ljava/util/HashMap;-><init>()V
+    return-object v0
+.end method
+.end class
+"""),
+        ("ThreadHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static sleep(J)V
+    .locals 0
+    :try_start
+    invoke-static {p0, p1}, Ljava/lang/Thread;->sleep(J)V
+    :try_end
+    .catch Ljava/lang/InterruptedException; {:try_start .. :try_end} :catch
+    :catch
+    return-void
+.end method
+.end class
+"""),
+        ("PreferenceHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static getBoolean(Landroid/content/Context;Ljava/lang/String;)Z
+    .locals 2
+    const/4 v0, 0x0
+    invoke-virtual {p0, p1, v0}, Landroid/content/Context;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
+    move-result-object v0
+    const/4 v1, 0x0
+    invoke-interface {v0, p1, v1}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+    move-result v0
+    return v0
+.end method
+.end class
+"""),
+        ("UriHelper", """.class public L{P}/{N};
+.super Ljava/lang/Object;
+.source "{N}.java"
+.method public constructor <init>()V
+    .locals 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+    return-void
+.end method
+.method public static parse(Ljava/lang/String;)Landroid/net/Uri;
+    .locals 1
+    invoke-static {p0}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
+    move-result-object v0
+    return-object v0
+.end method
+.end class
+"""),
+    ]
+
+    # Select random subset of 20-35 snippets per build
+    count = _random.randint(20, min(35, len(ALL_SNIPPETS)))
+    selected = _random.sample(ALL_SNIPPETS, count)
+
+    injected = 0
+    used_names = set()
+    suffixes_extra = ["Impl","Manager","Helper","Client","Provider","Service",
+                      "Tracker","Monitor","Worker","Controller","Adapter","Factory"]
+
+    for class_name, template in selected:
+        # Add random suffix for uniqueness per build
+        suffix = _random.choice(suffixes_extra)
+        unique_name = f"{class_name}{suffix}"
+        if unique_name in used_names:
+            unique_name = class_name
+        if unique_name in used_names:
+            continue
+        used_names.add(unique_name)
+
+        # Replace {P} with package path, {N} with class name
+        content = template.replace("{P}", new_path).replace("{N}", unique_name)
+
+        out_path = f"{smali_dir}/{unique_name}.smali"
         with open(out_path, "w") as f:
             f.write(content)
         injected += 1
