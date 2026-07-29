@@ -1012,21 +1012,22 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
             unique_name = f"{class_name}{suffix}2"
         used_names.add(unique_name)
 
-        # Replace placeholder with actual package
-        content = smali_content.replace("NEWPKG", new_path.replace("/", "/"))
-        content = content.replace(
-            f"Lcom/{new_path}/",
-            f"L{new_path}/"
+        # Replace NEWPKG placeholder with actual package path
+        # Template uses: Lcom/NEWPKG/ClassName;
+        # Target:        L{new_path}/UniqueName;
+        # Do all replacements in correct order — most specific first
+        content = smali_content.replace(
+            f".class public Lcom/NEWPKG/{class_name};",
+            f".class public L{new_path}/{unique_name};"
         )
-        # Fix class name in smali
         content = content.replace(
             f"Lcom/NEWPKG/{class_name};",
             f"L{new_path}/{unique_name};"
         )
-        content = content.replace(
-            f".class public Lcom/NEWPKG/{class_name};",
-            f".class public L{new_path}/{unique_name};"
-        )
+        # Replace any remaining NEWPKG references (e.g. in method descriptors)
+        content = content.replace("Lcom/NEWPKG/", f"L{new_path}/")
+        # Replace source file name
+        content = content.replace(f'"{class_name}.java"', f'"{unique_name}.java"')
 
         out_path = f"{smali_dir}/{unique_name}.smali"
         with open(out_path, "w") as f:
