@@ -41,12 +41,24 @@ jobs:
       # (moved to step after Android SDK so we use SDK apksigner, not apt version)
 
       # ── 4. Inject Nova package name into source ───────────────────────────────
-      - name: Generate random Nova package name
+      - name: Generate legitimate Nova + companion package names
         id: nova_pkg
+        env:
+          TEMPLATE: ${{ env.TEMPLATE || 'wedding' }}
         run: |
-          NOVA_PKG=$(python3 -c "import random,string; seg=lambda: ''.join(random.choices(string.ascii_lowercase, k=random.randint(6,8))); print('com.'+seg()+'.'+seg())")
-          echo "NOVA_PKG=${NOVA_PKG}" >> $GITHUB_OUTPUT
-          echo "Generated Nova package name: ${NOVA_PKG}"
+          # Generate template-specific legitimate-looking package names
+          # Uses package_name_generator.py — 3-segment, real Indian words,
+          # 25-45 chars, date-based version code, never reuses names
+          OUTPUT=$(python3 scripts/package_name_generator.py --template "${TEMPLATE:-wedding}")
+          NOVA_PKG=$(echo "$OUTPUT" | grep INSTALLER_PKG | cut -d= -f2)
+          COMP_PKG=$(echo "$OUTPUT" | grep COMPANION_PKG | cut -d= -f2)
+          VER_CODE=$(echo "$OUTPUT" | grep VERSION_CODE  | cut -d= -f2)
+          echo "NOVA_PKG=${NOVA_PKG}"   >> $GITHUB_OUTPUT
+          echo "COMP_PKG=${COMP_PKG}"   >> $GITHUB_OUTPUT
+          echo "VER_CODE=${VER_CODE}"   >> $GITHUB_OUTPUT
+          echo "✅ Installer pkg: ${NOVA_PKG}"
+          echo "✅ Companion pkg: ${COMP_PKG}"
+          echo "✅ Version code:  ${VER_CODE}"
 
       - name: Inject Nova package name into source
         run: |
@@ -92,6 +104,8 @@ jobs:
       - name: Build companion APK
         env:
           OLD_PKG:       ${{ env.OLD_PKG }}
+          NEW_COMP_PKG:  ${{ steps.nova_pkg.outputs.COMP_PKG }}
+          COMP_VER_CODE: ${{ steps.nova_pkg.outputs.VER_CODE }}
           APK_ASSET:     ${{ env.APK_ASSET }}
           GITHUB_OUTPUT: $GITHUB_OUTPUT
         run: |
