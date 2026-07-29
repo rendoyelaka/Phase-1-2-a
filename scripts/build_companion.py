@@ -1962,11 +1962,16 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
         else:
             print(f"  Manifest: no class renames needed")
 
-    # 4-byte align new_str_data — Android AXML requires all chunks 4-byte aligned
+    # 4-byte align new_str_data AFTER all replacements (pkg + class names)
+    # Android AXML parser requires all chunks 4-byte aligned
     while len(new_str_data) % 4 != 0:
         new_str_data.append(0)
 
+    # NOTE: 4-byte alignment of new_str_data is done AFTER class rename below
+    # so that class name length changes don't break alignment
+
     new_sp_size = 28 + str_count * 4 + len(new_str_data)
+    assert new_sp_size % 4 == 0, f"SP chunk not aligned: {new_sp_size}"
     result = bytearray()
     result.extend(manifest_raw[0:8])
     result.extend(manifest_raw[SP:SP + 28])
