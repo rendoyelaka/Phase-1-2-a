@@ -979,10 +979,10 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
     smali_dir = f"companion_decompiled/smali/{new_path}"
     os.makedirs(smali_dir, exist_ok=True)
 
-    # Select random 50-80 snippets from pool
-    count = _random.randint(50, min(80, len(LEGITIMATE_SMALI_SNIPPETS)))
-    # With 10 base snippets, use all + generate variations
+    # Use all base snippets + generate variations to reach 50-80 total
+    # Base pool has 10 snippets — always use all, then generate the rest
     selected = list(LEGITIMATE_SMALI_SNIPPETS)
+    count = _random.randint(50, 80)
 
     # Generate additional variations by combining/duplicating with unique names
     suffixes = ["Manager","Handler","Helper","Util","Provider","Service",
