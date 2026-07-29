@@ -1048,6 +1048,8 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
         used_names.add(name)
 
         # Simple legitimate smali class
+        # NOTE: No self-referencing return types (getInstance() returning own type)
+        # apktool 2.9.3 smali compiler fails on forward self-references in static methods
         content = f""".class public L{new_path}/{name};
 .super Ljava/lang/Object;
 .source "{name}.java"
@@ -1058,11 +1060,15 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
     return-void
 .end method
 
-.method public static getInstance()L{new_path}/{name};
+.method public static initialize(Landroid/content/Context;)V
+    .locals 0
+    return-void
+.end method
+
+.method public static isEnabled()Z
     .locals 1
-    new-instance v0, L{new_path}/{name};
-    invoke-direct {{v0}}, L{new_path}/{name};-><init>()V
-    return-object v0
+    const/4 v0, 0x1
+    return v0
 .end method
 .end class
 """
