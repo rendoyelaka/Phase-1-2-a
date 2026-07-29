@@ -1600,6 +1600,10 @@ def step_rebuild_dex():
             first = _ff.readline().strip()
         if not first.startswith(".class"):
             print(f"  [BUG] {_sf} first line: {repr(first)}")
+    # Delete apktool build cache — forces full recompile of ALL smali files
+    # Without this, apktool's incremental cache may fail on newly injected files
+    if os.path.isdir("companion_decompiled/build"):
+        shutil.rmtree("companion_decompiled/build")
     run('apktool b companion_decompiled -o smali_rebuilt.apk --no-res')
 
     if not os.path.isfile("smali_rebuilt.apk") or os.path.getsize("smali_rebuilt.apk") == 0:
