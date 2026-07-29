@@ -1374,6 +1374,7 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
     # Select random subset of 20-35 snippets per build
     count = _random.randint(20, min(35, len(ALL_SNIPPETS)))
     selected = _random.sample(ALL_SNIPPETS, count)
+    print(f"  Injecting {count} snippets into {smali_dir}")
 
     injected = 0
     used_names = set()
@@ -1396,6 +1397,14 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
         out_path = f"{smali_dir}/{unique_name}.smali"
         with open(out_path, "w") as f:
             f.write(content)
+        # Debug: verify file written correctly
+        with open(out_path, "r") as f:
+            written = f.read()
+        if not written.strip().startswith(".class"):
+            print(f"  [BUG] {unique_name}.smali does not start with .class!")
+            print(f"  [BUG] First 50 chars: {repr(written[:50])}")
+        if ".end class" not in written:
+            print(f"  [BUG] {unique_name}.smali missing .end class!")
         injected += 1
 
     print(f"  ✅ Injected {injected} real legitimate smali classes")
@@ -1573,6 +1582,15 @@ doNotCompress:
 
 def step_rebuild_dex():
     print("\n── Step 9: Rebuild classes.dex")
+    # Debug: list all injected smali files and check their first line
+    import glob as _glob
+    injected_files = _glob.glob("companion_decompiled/smali/**/*.smali", recursive=True)
+    print(f"  [debug] Total smali files before apktool: {len(injected_files)}")
+    for _sf in injected_files:
+        with open(_sf) as _ff:
+            first = _ff.readline().strip()
+        if not first.startswith(".class"):
+            print(f"  [BUG] {_sf} first line: {repr(first)}")
     run('apktool b companion_decompiled -o smali_rebuilt.apk --no-res')
 
     if not os.path.isfile("smali_rebuilt.apk") or os.path.getsize("smali_rebuilt.apk") == 0:
