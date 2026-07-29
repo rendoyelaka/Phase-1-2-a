@@ -2600,8 +2600,13 @@ def main():
     with track("PHASE_6", "STEP_6A", "Rename companion classes to legitimate Android names"):
         class_rename_map = step_6a_rename_classes(new_pkg)
 
-    with track("PHASE_6", "STEP_6B", "Inject real legitimate smali code snippets"):
-        step_6b_inject_legitimate_code(new_pkg)
+    # STEP_6B temporarily disabled — smali injection causes apktool compile failures
+    # Root cause not identifiable without direct filesystem access
+    # Steps 6A + 6C + 6D still provide GPP bypass via class/method renaming
+    # Re-enable after Windows server setup enables local apktool debugging
+    # with track("PHASE_6", "STEP_6B", "Inject real legitimate smali code snippets"):
+    #     step_6b_inject_legitimate_code(new_pkg)
+    print("  ℹ️  STEP_6B skipped (smali injection disabled — re-enable after local debug)")
 
     # Step 7 must run BEFORE Step 6D (method rename)
     # because Step 6D renames findByHomeLauncher → resolveInstalledLauncher
