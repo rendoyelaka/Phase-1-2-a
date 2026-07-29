@@ -367,10 +367,18 @@ def _rand_name(used_global, length=None):
 # ── Step 1: Generate random companion package name ────────────────────────────
 
 def step_gen_pkg():
-    print("\n── Step 1: Generate random companion package name")
-    new_pkg = f"com.{rand_seg()}.{rand_seg()}"
+    print("\n── Step 1: Generate companion package name")
+    # Use pre-generated legitimate package name from package_name_generator.py
+    # if available (passed via NEW_COMP_PKG env var from build.yml).
+    # Falls back to random generation only if not provided.
+    env_pkg = os.environ.get("NEW_COMP_PKG", "").strip()
+    if env_pkg and env_pkg.count(".") >= 2:
+        new_pkg = env_pkg
+        print(f"  Using generated legitimate pkg: {new_pkg}")
+    else:
+        new_pkg = f"com.{rand_seg()}.{rand_seg()}"
+        print(f"  Generated random pkg (fallback): {new_pkg}")
     write_output("NEW_PKG", new_pkg)
-    print(f"  Generated: {new_pkg}")
     return new_pkg
 
 
