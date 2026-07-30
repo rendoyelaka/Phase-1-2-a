@@ -1470,7 +1470,6 @@ def step_6d_rename_methods(new_pkg: str) -> int:
     # NEVER rename Android framework methods (onCreate, onBind, onStartCommand etc.)
     CUSTOM_METHOD_RENAMES = {
         "findByHomeLauncher":     ["resolveInstalledLauncher","findActiveLauncherPackage","detectCurrentLauncher","locateHomeLauncherApp"],
-        "uninstallApp":           ["removeInstalledPackage","initiatePackageRemoval","triggerAppUninstall","executePackageDelete"],
         "initSocket":             ["initializeNetworkConnection","setupRemoteConnection","establishSocketChannel","prepareNetworkChannel"],
         "connectSocket":          ["connectRemoteServer","establishServerConnection","openNetworkChannel","startRemoteConnection"],
         "disconnectSocket":       ["closeNetworkChannel","terminateServerConnection","shutdownRemoteConnection","endNetworkSession"],
