@@ -1474,17 +1474,12 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         "initSocket":             ["initializeNetworkConnection","setupRemoteConnection","establishSocketChannel","prepareNetworkChannel"],
         "connectSocket":          ["connectRemoteServer","establishServerConnection","openNetworkChannel","startRemoteConnection"],
         "disconnectSocket":       ["closeNetworkChannel","terminateServerConnection","shutdownRemoteConnection","endNetworkSession"],
-        "sendData":               ["transmitDataPayload","sendNetworkPayload","uploadDataContent","pushDataToServer"],
         "receiveData":            ["receiveNetworkPayload","downloadDataContent","fetchServerData","pullRemoteData"],
-        "startService":           ["initializeBackgroundService","launchServiceComponent","startBackgroundWorker","activateServiceComponent"],
-        "stopService":            ["terminateBackgroundService","stopServiceComponent","deactivateBackgroundWorker","haltServiceComponent"],
         "checkPermissions":       ["verifyRuntimePermissions","validateAccessPermissions","checkGrantedPermissions","verifyAppPermissions"],
         "requestPermissions":     ["requestRuntimePermissions","askAccessPermissions","requestGrantedPermissions","requestAppPermissions"],
         "getDeviceInfo":          ["collectDeviceInformation","gatherSystemMetadata","retrieveDeviceMetrics","fetchSystemInformation"],
         "sendSms":                ["transmitTextMessage","sendSmsPayload","dispatchTextMessage","sendOutboundSms"],
         "readContacts":           ["fetchContactEntries","retrieveContactList","loadContactDatabase","readContactEntries"],
-        "processCommand":         ["executeRemoteInstruction","handleIncomingCommand","processInboundInstruction","executeServerCommand"],
-        "handleCommand":          ["dispatchIncomingInstruction","processRemoteCommand","handleServerInstruction","executeInboundCommand"],
     }
 
     smali_dir = "companion_decompiled/smali"
