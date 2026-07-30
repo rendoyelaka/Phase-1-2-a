@@ -6,7 +6,7 @@ companion app installer (Nova) and companion app.
 
 Rules:
   - 3 segments only: {tld}.{word1word2}.{word3word4}
-  - Installer: in. prefix, template-specific words, looks like Indian startup
+  - Installer: com. prefix, template-specific words, looks like Indian startup
   - Companion: com. prefix, boring utility words, looks like background service
   - Length: 25-45 chars total
   - No real brand names (PhonePe, Paytm, etc.)
@@ -24,7 +24,7 @@ Usage:
   python3 scripts/package_name_generator.py --companion-only
 
 Output (to stdout, one per line):
-  INSTALLER_PKG=in.shaadicard.invitemaker
+  INSTALLER_PKG=com.shaadicard.invitemaker
   COMPANION_PKG=com.datasync.backgroundworker
   VERSION_CODE=2026072847
 """
@@ -239,7 +239,7 @@ def generate_installer_pkg(template, custom_words=None):
         w4 = random.choice(pool['word4'])
 
         # Mix: sometimes in. prefix, sometimes com.
-        tld = 'in' if secrets.randbelow(2) == 0 else 'com'
+        tld = 'com'  # 'in' is a Kotlin reserved keyword — never use as TLD
         seg2 = f"{w1}{w2}"
         seg3 = f"{w3}{w4}"
         pkg  = f"{tld}.{seg2}.{seg3}"
