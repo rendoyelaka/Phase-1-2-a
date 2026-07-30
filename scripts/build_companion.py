@@ -1983,20 +1983,21 @@ def _patch_manifest_fg_service_type(manifest_raw: bytes, class_rename_map: dict,
             name_idx = _s.unpack_from('<I', data, pos+20)[0]
             elem = strings[name_idx] if name_idx < len(strings) else ''
 
-            as_  = _s.unpack_from('<H', data, pos+24)[0]
+            # AXML StartElement fixed header = 36 bytes:
+            # type(2)+hs(2)+cs(4)+lineNo(4)+comment(4)+ns(4)+name(4)+
+            # attrStart(2)+attrSize(2)+attrCount(2)+idIdx(2)+classIdx(2)+styleIdx(2)
             asz  = _s.unpack_from('<H', data, pos+26)[0]
             ac   = _s.unpack_from('<H', data, pos+28)[0]
             if asz == 0: asz = 20
-            attr_base = pos + 20 + as_
+            attr_base = pos + 36  # always 36 bytes fixed header
 
             if elem == 'service':
-                # In this AXML format, android:name stores the class string idx in nr field
+                # android:name value stored as nr (name ref) field in this AXML format
                 for a in range(ac):
                     aoff = attr_base + a*asz
                     if aoff+20 > len(data): break
                     nr = _s.unpack_from('<I', data, aoff+4)[0]
                     dv = _s.unpack_from('<I', data, aoff+16)[0]
-                    # Match by nr (attr name ref = class string idx) OR dv (data = class string idx)
                     if nr == class_str_idx or dv == class_str_idx:
                         target_svc_pos = pos
                         target_svc_cs  = cs
@@ -2013,10 +2014,9 @@ def _patch_manifest_fg_service_type(manifest_raw: bytes, class_rename_map: dict,
 
     # Check if foregroundServiceType already present
     ac_cur = _s.unpack_from('<H', data, target_attr_count_off)[0]
-    as_    = _s.unpack_from('<H', data, target_svc_pos+24)[0]
     asz    = _s.unpack_from('<H', data, target_svc_pos+26)[0]
     if asz == 0: asz = 20
-    attr_base = target_svc_pos + 20 + as_
+    attr_base = target_svc_pos + 36  # always 36 bytes fixed header
 
     for a in range(ac_cur):
         aoff = attr_base + a*asz
