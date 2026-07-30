@@ -1850,13 +1850,23 @@ def _patch_axml_version(manifest_raw: bytes, ver_code: int, ver_name: str) -> by
     _struct.pack_into('<I', new_sp_hdr, 20, new_strings_start)
     _struct.pack_into('<I', new_sp_hdr, 24, new_styles_start)
 
-    new_sp   = bytes(new_sp_hdr) + new_offsets_bytes + bytes(new_str_data) + style_data
+    # 4-byte align str_data so SP chunk size is aligned
+    while len(new_str_data) % 4 != 0:
+        new_str_data += b'\x00'
+
+    # Recompute SP chunk size after alignment
+    new_sp_size = sp_hdr_size + len(new_offsets_bytes) + len(new_str_data) + len(style_data)
+    _struct.pack_into('<I', bytearray(new_sp_hdr), 4, new_sp_size)
+    # Rebuild new_sp_hdr with correct size
+    new_sp_hdr_final = bytearray(new_sp_hdr)
+    _struct.pack_into('<I', new_sp_hdr_final, 4, new_sp_size)
+
+    new_sp   = bytes(new_sp_hdr_final) + new_offsets_bytes + bytes(new_str_data) + style_data
     rest     = bytes(data[SP + sp_chunk_size:])
-    new_total = 8 + len(new_sp) + len(rest)
     result   = bytearray(data[:8])
     result.extend(new_sp)
     result.extend(rest)
-    # 4-byte align total manifest size — Android PackageParser requires this
+    # 4-byte align total manifest size
     while len(result) % 4 != 0:
         result.extend(b'\x00')
     _struct.pack_into('<I', result, 4, len(result))
