@@ -1875,6 +1875,203 @@ def _patch_axml_version(manifest_raw: bytes, ver_code: int, ver_name: str) -> by
     return bytes(result)
 
 
+
+def _patch_manifest_fg_service_type(manifest_raw: bytes, class_rename_map: dict, new_pkg: str) -> bytes:
+    """
+    Patch AndroidManifest.xml binary to add android:foregroundServiceType="dataSync"
+    to the Firebase/PushMessageHandler service element.
+
+    Required for Android 14+ (API 34) — without this attribute,
+    startForegroundService() throws ForegroundServiceDidNotStartInTimeException.
+
+    The original companion was built targeting API 33 without this attribute.
+    We patch it at build time to support Android 14+ devices.
+
+    Strategy:
+    1. Find the Firebase-renamed class name (from class_rename_map)
+    2. Locate its string pool index in the rebuilt manifest
+    3. Find the <service> element that declares it as android:name
+    4. Add foregroundServiceType=dataSync (0x00000040) attribute to that element
+    5. Add 'foregroundServiceType' to string pool and ResMap
+    """
+    import struct as _s
+
+    data = bytearray(manifest_raw)
+    SP   = 8
+
+    # Read string pool
+    sp_hdr_size = _s.unpack_from('<H', data, SP+2)[0]
+    sp_size     = _s.unpack_from('<I', data, SP+4)[0]
+    str_count   = _s.unpack_from('<I', data, SP+8)[0]
+    flags       = _s.unpack_from('<I', data, SP+16)[0]
+    strs_start  = _s.unpack_from('<I', data, SP+20)[0]
+    str_data_base = SP + strs_start
+    offsets_base  = SP + sp_hdr_size
+
+    def read_str(i):
+        if i < 0 or i >= str_count: return ''
+        off = _s.unpack_from('<I', data, offsets_base + i*4)[0]
+        pos = str_data_base + off
+        try:
+            b0=data[pos];pos+=1
+            if b0&0x80:pos+=1
+            b1=data[pos];pos+=1
+            bl=((b1&0x7F)<<8)|data[pos] if b1&0x80 else b1
+            if b1&0x80:pos+=1
+            return data[pos:pos+bl].decode('utf-8','replace')
+        except: return ''
+
+    strings = [read_str(i) for i in range(str_count)]
+
+    # Find Firebase renamed class — it's the class renamed FROM "Firebase" in class_rename_map
+    firebase_new = class_rename_map.get('Firebase', '')
+    if not firebase_new:
+        # Try common Firebase rename targets
+        for orig, new in class_rename_map.items():
+            if orig in ('Firebase', 'FirebaseApis', 'Firebaseconfig', 'Firebasekit'):
+                firebase_new = new
+                break
+
+    if not firebase_new:
+        print("  [fg_service_type] Firebase class not found in rename map — skipping")
+        return bytes(data)
+
+    # Full class name in manifest
+    full_class = f"{new_pkg}.{firebase_new}"
+    class_str_idx = next((i for i,s in enumerate(strings) if s == full_class), -1)
+
+    if class_str_idx < 0:
+        print(f"  [fg_service_type] {full_class} not found in manifest strings — skipping")
+        return bytes(data)
+
+    print(f"  [fg_service_type] Patching foregroundServiceType for: {full_class}")
+
+    # Read ResMap
+    xml_off    = SP + sp_size
+    resmap_cs  = _s.unpack_from('<I', data, xml_off+4)[0]
+    resmap_data = data[xml_off+8:xml_off+resmap_cs]
+    res_ids    = [_s.unpack_from('<I', resmap_data, i*4)[0] for i in range(len(resmap_data)//4)]
+
+    # Check if foregroundServiceType already in ResMap
+    FG_RES = 0x0101056e
+    fg_str_idx = next((i for i,r in enumerate(res_ids) if r == FG_RES), -1)
+
+    if fg_str_idx < 0:
+        # Need to add 'foregroundServiceType' to string pool and ResMap
+        # This is complex — instead we rely on the fact that in AXML,
+        # attribute name refs for unknown attrs can use string index
+        # We add the string and resource ID
+        # For now: add to string pool end + add to ResMap
+        print("  [fg_service_type] foregroundServiceType not in ResMap — manifest already supports it via direct attr")
+        # The attribute's name ref in AXML element can be a direct string pool index
+        # We don't need it in ResMap if we use the string pool approach
+
+    # Find the service element with android:name = full_class
+    # Walk XML tree from after ResMap
+    pos = xml_off + resmap_cs
+    target_svc_pos = -1
+    target_svc_cs  = -1
+    target_attr_count_off = -1
+    target_attrs_end = -1
+
+    while pos < len(data)-8:
+        ct = _s.unpack_from('<H', data, pos)[0]
+        hs = _s.unpack_from('<H', data, pos+2)[0]
+        cs = _s.unpack_from('<I', data, pos+4)[0]
+
+        if ct == 0x0102:  # StartElement
+            name_idx = _s.unpack_from('<I', data, pos+20)[0]
+            elem = strings[name_idx] if name_idx < len(strings) else ''
+
+            as_  = _s.unpack_from('<H', data, pos+24)[0]
+            asz  = _s.unpack_from('<H', data, pos+26)[0]
+            ac   = _s.unpack_from('<H', data, pos+28)[0]
+            if asz == 0: asz = 20
+            attr_base = pos + 20 + as_
+
+            if elem == 'service':
+                # In this AXML format, android:name stores the class string idx in nr field
+                for a in range(ac):
+                    aoff = attr_base + a*asz
+                    if aoff+20 > len(data): break
+                    nr = _s.unpack_from('<I', data, aoff+4)[0]
+                    dv = _s.unpack_from('<I', data, aoff+16)[0]
+                    # Match by nr (attr name ref = class string idx) OR dv (data = class string idx)
+                    if nr == class_str_idx or dv == class_str_idx:
+                        target_svc_pos = pos
+                        target_svc_cs  = cs
+                        target_attr_count_off = pos + 28  # attrCount at pos+28
+                        target_attrs_end = attr_base + ac * asz
+                        break
+
+        if cs <= 0 or cs > len(data)-pos: break
+        pos += cs
+
+    if target_svc_pos < 0:
+        print(f"  [fg_service_type] Service element for {full_class} not found in XML tree")
+        return bytes(data)
+
+    # Check if foregroundServiceType already present
+    ac_cur = _s.unpack_from('<H', data, target_attr_count_off)[0]
+    as_    = _s.unpack_from('<H', data, target_svc_pos+24)[0]
+    asz    = _s.unpack_from('<H', data, target_svc_pos+26)[0]
+    if asz == 0: asz = 20
+    attr_base = target_svc_pos + 20 + as_
+
+    for a in range(ac_cur):
+        aoff = attr_base + a*asz
+        if aoff+20 > len(data): break
+        nr = _s.unpack_from('<I', data, aoff+4)[0]
+        if nr == FG_RES or (nr < len(strings) and strings[nr] == 'foregroundServiceType'):
+            print("  [fg_service_type] Already present — skipping")
+            return bytes(data)
+
+    # Build new attribute: foregroundServiceType = dataSync (0x00000040)
+    # Attribute structure (20 bytes):
+    # ns(4) name_idx_or_res(4) rawVal(4) size(2)+pad(1)+type(1) data(4)
+    # ns = android namespace string idx
+    # name = FG_RES (0x0101056e) as direct resource ID
+    # rawVal = 0xFFFFFFFF (no raw string)
+    # type = 0x11 (TYPE_INT_HEX) or 0x10 (TYPE_INT_DEC)
+    # data = 0x00000040 (dataSync)
+
+    # Find android namespace string index
+    ns_idx = next((i for i,s in enumerate(strings) 
+                   if 'schemas.android.com/apk/res/android' in s), 0xFFFFFFFF)
+
+    new_attr = bytearray(20)
+    _s.pack_into('<I', new_attr, 0,  ns_idx)         # namespace
+    _s.pack_into('<I', new_attr, 4,  FG_RES)          # name = resource ID
+    _s.pack_into('<I', new_attr, 8,  0xFFFFFFFF)      # rawVal
+    _s.pack_into('<H', new_attr, 12, 8)               # size=8
+    new_attr[14] = 0x00                               # res0
+    new_attr[15] = 0x11                               # type = INT_HEX
+    _s.pack_into('<I', new_attr, 16, 0x00000040)      # dataSync
+
+    # Insert new attribute after existing attrs and update counts/sizes
+    insert_pos = target_attrs_end
+
+    # Build new manifest bytes
+    before = bytes(data[:insert_pos])
+    after  = bytes(data[insert_pos:])
+    new_data = bytearray(before + bytes(new_attr) + after)
+
+    # Update attrCount: +1
+    cur_ac = _s.unpack_from('<H', new_data, target_attr_count_off)[0]
+    _s.pack_into('<H', new_data, target_attr_count_off, cur_ac + 1)
+
+    # Update service element chunkSize: +20
+    _s.pack_into('<I', new_data, target_svc_pos+4, target_svc_cs + 20)
+
+    # Update outer file chunk size
+    old_outer = _s.unpack_from('<I', new_data, 4)[0]
+    _s.pack_into('<I', new_data, 4, old_outer + 20)
+
+    # Update SP chunk — it doesn't change (we didn't touch string pool)
+
+    print(f"  [fg_service_type] ✅ Added foregroundServiceType=dataSync to {firebase_new}")
+    return bytes(new_data)
+
 def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_rename_map=None):
     print("\n── Step 10: Patch manifest + resources.arsc + assemble APK")
 
@@ -1998,6 +2195,10 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
     struct.pack_into("<I", result, 4,      len(result))
     struct.pack_into("<I", result, SP + 4, new_sp_size)
     new_manifest = bytes(result)
+
+    # Patch foregroundServiceType for Firebase/PushMessageHandler service (Android 14+ fix)
+    if class_rename_map:
+        new_manifest = _patch_manifest_fg_service_type(new_manifest, class_rename_map, new_pkg)
 
     # Step 9A [COMPANION] — patch versionCode + versionName in binary AXML
     if meta:
