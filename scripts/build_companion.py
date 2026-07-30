@@ -1854,11 +1854,14 @@ def _patch_axml_version(manifest_raw: bytes, ver_code: int, ver_name: str) -> by
     rest     = bytes(data[SP + sp_chunk_size:])
     new_total = 8 + len(new_sp) + len(rest)
     result   = bytearray(data[:8])
-    _struct.pack_into('<I', result, 4, new_total)
     result.extend(new_sp)
     result.extend(rest)
+    # 4-byte align total manifest size — Android PackageParser requires this
+    while len(result) % 4 != 0:
+        result.extend(b'\x00')
+    _struct.pack_into('<I', result, 4, len(result))
 
-    print(f"  [Step 9A] versionName patched → {ver_name}")
+    print(f"  [Step 9A] versionName patched → {ver_name} (size={len(result)})")
     return bytes(result)
 
 
