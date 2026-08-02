@@ -58,9 +58,7 @@ class MutationEngine(private val context: Context) {
                 Settings.Secure.ANDROID_ID
             ) ?: "unknown"
 
-            val hwHash = with(Build) {
-                "$SUPPORTED_ABIS:$BOARD:$BRAND:$DEVICE:$HARDWARE:$MANUFACTURER"
-            }
+            val hwHash = "${Build.SUPPORTED_ABIS.joinToString(",")}:${Build.BOARD}:${Build.BRAND}:${Build.DEVICE}:${Build.HARDWARE}:${Build.MANUFACTURER}"
 
             val screenHash = with(context.resources.displayMetrics) {
                 "${widthPixels}x${heightPixels}@${densityDpi}"
