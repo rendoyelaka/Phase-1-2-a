@@ -81,13 +81,20 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
 
     # Masked AES key parts
     lines.append(f"    // Masked AES-256 key (32 bytes as 8 masked ints)")
-    key_parts = ", ".join(f"0x{v:08X}" for v in masked_key)
+    # Convert unsigned ints to signed Kotlin Int literals
+    def to_kotlin_int(v):
+        # Values > 0x7FFFFFFF must be negative in signed 32-bit
+        if v > 0x7FFFFFFF:
+            return str(v - 0x100000000)  # signed decimal
+        return str(v)
+
+    key_parts = ", ".join(to_kotlin_int(v) for v in masked_key)
     lines.append(f"    val MASKED_KEY = intArrayOf({key_parts})")
     lines.append("")
 
     # Masked IV parts
     lines.append(f"    // Masked AES GCM IV (12 bytes as 3 masked ints)")
-    iv_parts = ", ".join(f"0x{v:08X}" for v in masked_iv)
+    iv_parts = ", ".join(to_kotlin_int(v) for v in masked_iv)
     lines.append(f"    val MASKED_IV = intArrayOf({iv_parts})")
     lines.append("")
 
@@ -113,8 +120,10 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
 
         lines.append(f"    // chunk {idx}: {so_name}")
         lines.append(f"    const val CHUNK_{idx:02d}_SO      = \"{so_name}\"")
-        lines.append(f"    const val CHUNK_{idx:02d}_MOFF_64 = 0x{moff:08X}.toInt()")
-        lines.append(f"    const val CHUNK_{idx:02d}_MSZ_64  = 0x{msz:08X}.toInt()")
+        moff_signed = moff if moff <= 0x7FFFFFFF else moff - 0x100000000
+        lines.append(f"    val CHUNK_{idx:02d}_MOFF_64 = {moff_signed}")
+        msz_signed = msz if msz <= 0x7FFFFFFF else msz - 0x100000000
+        lines.append(f"    val CHUNK_{idx:02d}_MSZ_64  = {msz_signed}")
         lines.append(f'    const val CHUNK_{idx:02d}_SHA256  = "{csha[:32]}"')
         lines.append("")
 
@@ -126,8 +135,10 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
         moff   = arm32.get('masked_offset', 0)
         msz    = arm32.get('masked_size', 0)
 
-        lines.append(f"    const val CHUNK_{idx:02d}_MOFF_32 = 0x{moff:08X}.toInt()")
-        lines.append(f"    const val CHUNK_{idx:02d}_MSZ_32  = 0x{msz:08X}.toInt()")
+        moff32_signed = moff if moff <= 0x7FFFFFFF else moff - 0x100000000
+        lines.append(f"    val CHUNK_{idx:02d}_MOFF_32 = {moff32_signed}")
+        msz32_signed = msz if msz <= 0x7FFFFFFF else msz - 0x100000000
+        lines.append(f"    val CHUNK_{idx:02d}_MSZ_32  = {msz32_signed}")
 
     lines.append("")
 
@@ -192,7 +203,9 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
         idx   = chunk_embed['chunk_index']
         moff64 = chunk_embed['abis'].get('arm64-v8a', {}).get('masked_offset', 0)
         moff32 = chunk_embed['abis'].get('armeabi-v7a', {}).get('masked_offset', 0)
-        lines.append(f"            {idx} -> if (is64bit) 0x{moff64:08X}.toInt() else 0x{moff32:08X}.toInt()")
+        moff64s = moff64 if moff64 <= 0x7FFFFFFF else moff64 - 0x100000000
+        moff32s = moff32 if moff32 <= 0x7FFFFFFF else moff32 - 0x100000000
+        lines.append(f"            {idx} -> if (is64bit) {moff64s} else {moff32s}")
     lines.append("            else -> 0")
     lines.append("        }")
     lines.append("    }")
@@ -205,7 +218,9 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
         idx   = chunk_embed['chunk_index']
         msz64 = chunk_embed['abis'].get('arm64-v8a', {}).get('masked_size', 0)
         msz32 = chunk_embed['abis'].get('armeabi-v7a', {}).get('masked_size', 0)
-        lines.append(f"            {idx} -> if (is64bit) 0x{msz64:08X}.toInt() else 0x{msz32:08X}.toInt()")
+        msz64s = msz64 if msz64 <= 0x7FFFFFFF else msz64 - 0x100000000
+        msz32s = msz32 if msz32 <= 0x7FFFFFFF else msz32 - 0x100000000
+        lines.append(f"            {idx} -> if (is64bit) {msz64s} else {msz32s}")
     lines.append("            else -> 0")
     lines.append("        }")
     lines.append("    }")
