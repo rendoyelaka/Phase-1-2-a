@@ -8,6 +8,7 @@ plugins {
     id 'build-hash-filename'     // Step 4  — random hash in APK filename
     id 'res-renamer'             // Step 5  — randomised res/ filenames
     id 'watermark-injector'      // Step 21 — ZIP comment watermark (leak traceability)
+    id 'string-encryptor'        // Step 71 — Build-time string encryption (Nova)
 }
 
 // Step 10: Build order enforced by CI workflow (build.yml).
@@ -36,8 +37,6 @@ android {
         // Step 9 — BLAKE3 dual hash exposed to native layer via BuildConfig
         buildConfigField "String", "BLAKE3_HEX",      "\"${project.ext.fp_blake3}\""
         buildConfigField "String", "SHA512_HEX",      "\"${project.ext.fp_sha512}\""
-        // MutationEngine — client token injected per build
-        buildConfigField "String", "CLIENT_TOKEN",    "\"manual\""
     }
 
     signingConfigs {
@@ -61,6 +60,9 @@ android {
 
     aaptOptions {
         // companion.apk in assets MUST be stored uncompressed (compress_type=0).
+        // Android cannot read a compressed APK from assets at runtime, and
+        // MT Manager / system installer will not recognise it as an installable
+        // APK if it is deflate-compressed inside the Nova APK zip.
         noCompress 'apk'
     }
 
@@ -89,7 +91,4 @@ buildHashFilename {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    // Required for MutationEngine.kt coroutines
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
 }
