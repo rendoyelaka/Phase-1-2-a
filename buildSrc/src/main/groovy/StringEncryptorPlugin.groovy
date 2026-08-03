@@ -62,6 +62,8 @@ class StringEncryptorPlugin implements Plugin<Project> {
         "UNKNOWN_SOURCES"   : "android.settings.MANAGE_UNKNOWN_APP_SOURCES",
         "REFERRER_URI"      : "android-app://com.android.vending",
         "MARKET_URI_PREFIX" : "market://details?id=",
+        "PKG_INSTALLER_URI"  : "package:",
+        "APP_DETAILS_URI"    : "android.settings.APPLICATION_DETAILS_SETTINGS",
 
         // UI strings
         "MSG_SET_HOME"      : "Please set this app as your default home launcher",
@@ -78,41 +80,40 @@ class StringEncryptorPlugin implements Plugin<Project> {
     void apply(Project project) {
         project.plugins.withId('com.android.application') {
 
-            project.android.applicationVariants.all { variant ->
-                if (!variant.name.toLowerCase().contains('release')) return
+            // Generate StringPool.kt at configuration time (afterEvaluate)
+            // so it exists on disk before Kotlin compiler task is created.
+            project.afterEvaluate {
+                project.android.applicationVariants.all { variant ->
+                    if (!variant.name.toLowerCase().contains('release')) return
 
-                def generateTask = project.tasks.register(
-                    "generateStringPool${variant.name.capitalize()}"
-                ) {
-                    doLast {
-                        generateStringPool(project, variant)
+                    // Generate immediately so file exists before task graph builds
+                    try { generateStringPool(project, variant) } catch(e) {}
+                    try { encryptReviews(project, variant) } catch(e) {}
+
+                    def generateTask = project.tasks.register(
+                        "generateStringPool${variant.name.capitalize()}"
+                    ) {
+                        doLast { generateStringPool(project, variant) }
                     }
-                }
 
-                // Wire: run before Kotlin compilation
-                project.tasks.matching {
-                    it.name.startsWith("compile") &&
-                    it.name.contains(variant.name.capitalize()) &&
-                    it.name.contains("Kotlin")
-                }.configureEach {
-                    dependsOn generateTask
-                }
-
-                // Wire: encrypt reviews into assets before mergeAssets
-                def encryptReviewsTask = project.tasks.register(
-                    "encryptReviews${variant.name.capitalize()}"
-                ) {
-                    doLast {
-                        encryptReviews(project, variant)
+                    def encryptTask = project.tasks.register(
+                        "encryptReviews${variant.name.capitalize()}"
+                    ) {
+                        doLast { encryptReviews(project, variant) }
                     }
-                }
 
-                project.tasks.matching {
-                    it.name.startsWith("merge") &&
-                    it.name.contains(variant.name.capitalize()) &&
-                    it.name.contains("Assets")
-                }.configureEach {
-                    dependsOn encryptReviewsTask
+                    project.tasks.configureEach { task ->
+                        def tname = task.name.toLowerCase()
+                        def vname = variant.name.toLowerCase()
+                        if ((tname.startsWith('compile') || tname.startsWith('process')) &&
+                            tname.contains(vname)) {
+                            task.dependsOn(generateTask)
+                        }
+                        if (tname.startsWith('merge') && tname.contains(vname) &&
+                            tname.contains('assets')) {
+                            task.dependsOn(encryptTask)
+                        }
+                    }
                 }
             }
         }
