@@ -35,13 +35,15 @@
     public static final java.lang.String INSTALL_SUCCESS_ACTION;
 }
 
-# PREFS_NAME + KEY_COMPANION_PKG — SharedPreferences keys used
-# across InstallActivity, InstallReceiver, SecondActivity.
-# If renamed → prefs read/write key mismatch → companion pkg
-# lost between activity transitions → reinstall loop.
--keepclassmembers class **.InstallReceiver {
-    public static final java.lang.String PREFS_NAME;
-    public static final java.lang.String KEY_COMPANION_PKG;
+# PREFS_NAME + KEY_COMPANION_PKG are now StringPool property getters.
+# No keep needed — they delegate to StringPool.d() at runtime.
+# Removing old field-based keeps that no longer apply.
+
+# Keep StringPool object — prevent R8 from inlining d() return values
+-keep class **.StringPool { *; }
+-keepclassmembers class **.StringPool {
+    public static *** d(java.lang.String);
+    public static *** loadReviews(android.content.Context, java.lang.String);
 }
 
 # isUninstalling — static flag read by MainActivity.onResume()
