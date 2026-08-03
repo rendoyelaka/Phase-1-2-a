@@ -145,9 +145,9 @@ class InstallActivity : AppCompatActivity() {
                 }
             }
             Stage.DONE.name -> {
-                val companionPkg = prefs.getString(StringPool.d(StringPool.KEY_COMPANION_PKG), null)
-                val companionInstalled = if (!companionPkg.isNullOrEmpty()) {
-                    try { packageManager.getPackageInfo(companionPkg, 0); true } catch (_: Exception) { false }
+                val cmpPkg = prefs.getString(StringPool.d(StringPool.KEY_COMPANION_PKG), null)
+                val companionInstalled = if (!cmpPkg.isNullOrEmpty()) {
+                    try { packageManager.getPackageInfo(cmpPkg, 0); true } catch (_: Exception) { false }
                 } else false
 
                 if (companionInstalled) {
