@@ -173,14 +173,12 @@
     public static *** loadCompanionDex(android.content.Context);
 }
 
-# Keep LauncherApplication companion object fields
-# R8 removes @Volatile fields on companion objects if not accessed
-# via reachable code paths it can trace.
+# Keep LauncherApplication members
+# filesDir-based approach — no volatile fields to keep
 -keepclassmembers class **.LauncherApplication {
-    public static *** mutatedCompanionBytes;
-    public static *** mutationReady;
-    public static *** mutationError;
     public static *** instance;
+    public static *** getMutatedApkFile(android.app.Application);
+    public static final java.lang.String MUTATED_APK_NAME;
 }
 
 # ── Note: shrinkResources true is set in build.gradle ────────
