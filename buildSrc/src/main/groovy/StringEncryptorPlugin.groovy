@@ -123,11 +123,11 @@ class StringEncryptorPlugin implements Plugin<Project> {
 
         def sb = new StringBuilder('{')
         data.eachWithIndex { entry, ti ->
-            sb.append("\\"${entry.k}\\":[")
+            sb.append('"' + entry.k + '":[')
             entry.items.eachWithIndex { item, ii ->
-                def r = item.r.replace('"', '\\"')
-                def n = item.n.replace('"', '\\"')
-                sb.append("{\\"n\\":\\"${n}\\",\\"s\\":${item.s},\\"r\\":\\"${r}\\"}")
+                def rr = item.r.replace('"', '\\"')
+                def nn = item.n.replace('"', '\\"')
+                sb.append('{"n":"' + nn + '","s":' + item.s + ',"r":"' + rr + '"}')
                 if (ii < entry.items.size()-1) sb.append(',')
             }
             sb.append(']')
