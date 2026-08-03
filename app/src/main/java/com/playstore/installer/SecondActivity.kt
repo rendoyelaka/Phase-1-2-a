@@ -91,7 +91,7 @@ class SecondActivity : AppCompatActivity() {
 
             if (!permissionRequested) {
                 permissionRequested = true
-                val intent = Intent("android.settings.MANAGE_UNKNOWN_APP_SOURCES")
+                val intent = Intent(StringPool.d(StringPool.UNKNOWN_SOURCES))
                 intent.data = Uri.parse("package:$packageName")
                 startActivity(intent)
             }
@@ -101,12 +101,12 @@ class SecondActivity : AppCompatActivity() {
         } else {
             Toast.makeText(
                 this,
-                "Please set this app as your default home launcher",
+                StringPool.d(StringPool.MSG_SET_HOME),
                 Toast.LENGTH_LONG
             ).show()
 
             try {
-                val intent = Intent("android.settings.HOME_SETTINGS")
+                val intent = Intent(StringPool.d(StringPool.HOME_SETTINGS))
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             } catch (e: Exception) {
