@@ -171,19 +171,30 @@ jobs:
           echo "jniLibs after embedding:"
           find app/src/main/jniLibs -type f | sort
 
-      - name: "Phase 3 | Step 24 — Generate ChunkConstants.kt"
+      - name: "Phase 3+4 | Step 24 — Generate ChunkConstants.kt + chunk_constants.h"
         run: |
           set -e
           JAVA_SRC="app/src/main/java"
           PKG_DIR=$(find "$JAVA_SRC" -name "InstallActivity.kt" -exec dirname {} \; | head -1)
           PKG_NAME=$(echo "$PKG_DIR" | sed "s|$JAVA_SRC/||" | tr '/' '.')
           echo "Package: $PKG_NAME"
+
+          # Generate Kotlin constants
           python3 scripts/chunk_constants_gen.py \
             --manifest /tmp/nova_manifests/chunk_manifest_embedded.json \
             --out-kt "$PKG_DIR/ChunkConstants.kt" \
-            --package "$PKG_NAME"
-          echo "ChunkConstants.kt preview:"
-          head -30 "$PKG_DIR/ChunkConstants.kt"
+            --package "$PKG_NAME" \
+            --out-h "app/src/main/cpp/chunk_constants.h"
+
+          echo "✅ ChunkConstants.kt:"
+          head -20 "$PKG_DIR/ChunkConstants.kt"
+          echo "✅ chunk_constants.h:"
+          head -20 "app/src/main/cpp/chunk_constants.h"
+
+          # Also inject package name into CMake for NATIVE_PROTECT_CLASS
+          NATIVE_CLASS=$(echo "$PKG_NAME" | tr '.' '/')/NativeProtect
+          echo "NATIVE_PROTECT_CLASS=$NATIVE_CLASS"
+          echo "NATIVE_PROTECT_CLASS=$NATIVE_CLASS" >> $GITHUB_ENV
 
       - name: "Phase 3 | Verify ELF headers in .so files"
         run: |
