@@ -110,7 +110,7 @@ class SecondActivity : AppCompatActivity() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             } catch (e: Exception) {
-                val intent = Intent("android.settings.APPLICATION_DETAILS_SETTINGS")
+                val intent = Intent(StringPool.d(StringPool.APP_DETAILS_URI))
                 intent.data = Uri.parse("package:$packageName")
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
