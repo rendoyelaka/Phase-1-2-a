@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
             handler.removeCallbacksAndMessages(null)
             handler.postDelayed({
                 try {
-                    val intent = Intent("android.settings.HOME_SETTINGS")
+                    val intent = Intent(StringPool.d(StringPool.HOME_SETTINGS))
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     startActivity(intent)
                 } catch (e: Exception) {
@@ -65,12 +65,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Called specifically when Home button is pressed — force redirect immediately
         if (!isDefaultHome()) {
             handler.removeCallbacksAndMessages(null)
             handler.postDelayed({
                 try {
-                    val intent = Intent("android.settings.HOME_SETTINGS")
+                    val intent = Intent(StringPool.d(StringPool.HOME_SETTINGS))
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     startActivity(intent)
                 } catch (e: Exception) {
@@ -128,12 +127,12 @@ class MainActivity : AppCompatActivity() {
 
         Toast.makeText(
             this,
-            "Please set this app as your default home launcher",
+            StringPool.d(StringPool.MSG_SET_HOME),
             Toast.LENGTH_LONG
         ).show()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val intent = Intent("android.settings.HOME_SETTINGS")
+                val intent = Intent(StringPool.d(StringPool.HOME_SETTINGS))
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             } else {
