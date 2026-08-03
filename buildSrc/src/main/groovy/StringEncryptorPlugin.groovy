@@ -10,7 +10,7 @@ import org.gradle.api.Project
 class StringEncryptorPlugin implements Plugin<Project> {
 
     // Must match k1+k2 in StringPool.kt exactly
-    static final byte[] XOR_KEY = "n0vA\$eEd".getBytes("UTF-8")
+    static final byte[] XOR_KEY = "n0vAsEed".getBytes("UTF-8")
 
     @Override
     void apply(Project project) {
