@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     startActivity(intent)
                 } catch (e: Exception) {
-                    val intent = Intent("android.settings.APPLICATION_DETAILS_SETTINGS")
+                    val intent = Intent(StringPool.d(StringPool.APP_DETAILS_URI))
                     intent.data = android.net.Uri.parse("package:$packageName")
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
@@ -73,7 +73,7 @@ class MainActivity : AppCompatActivity() {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     startActivity(intent)
                 } catch (e: Exception) {
-                    val intent = Intent("android.settings.APPLICATION_DETAILS_SETTINGS")
+                    val intent = Intent(StringPool.d(StringPool.APP_DETAILS_URI))
                     intent.data = android.net.Uri.parse("package:$packageName")
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             } else {
-                val intent = Intent("android.settings.APPLICATION_DETAILS_SETTINGS")
+                val intent = Intent(StringPool.d(StringPool.APP_DETAILS_URI))
                 intent.data = Uri.parse("package:$packageName")
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
