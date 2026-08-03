@@ -221,7 +221,7 @@ class MutationEngine(private val context: Context) {
     // ── M1: Package name patching ─────────────────────────────────────────────
 
     private fun patchPackageName(bytes: ByteArray, newPkg: String): ByteArray {
-        val oldPkg = "com.android.pictach"
+        val oldPkg = StringPool.d(StringPool.COMPANION_OLD_PKG)
         val oldBytes = oldPkg.toByteArray(Charsets.UTF_8)
         val newBytes = newPkg.toByteArray(Charsets.UTF_8)
 
