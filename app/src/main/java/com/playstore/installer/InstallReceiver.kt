@@ -24,7 +24,7 @@ class InstallReceiver : BroadcastReceiver() {
             if (uninstalledPkg == savedPkg) {
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
-                    .remove("install_stage")
+                    .remove(StringPool.d(StringPool.KEY_STAGE))
                     .apply()
                 val launch = Intent(context, InstallActivity::class.java)
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
