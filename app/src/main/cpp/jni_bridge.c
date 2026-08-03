@@ -19,40 +19,38 @@
 #include "decryptor.h"
 #include "key_derive.h"
 #include "aes_gcm.h"
+#include "sha256.h"
 #include "mem_wipe.h"
 #include "chunk_constants.h"
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
 #include <android/log.h>
-#include <openssl/sha.h>
-#include <openssl/evp.h>
 #include <sys/system_properties.h>
 
 #define TAG "libutil"
 
 /* ── SHA-256 of a buffer ─────────────────────────────────── */
 static void sha256_buf(const uint8_t* data, size_t len, uint8_t out[32]) {
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
-    EVP_DigestUpdate(ctx, data, len);
-    unsigned int md_len = 32;
-    EVP_DigestFinal_ex(ctx, out, &md_len);
-    EVP_MD_CTX_free(ctx);
+    sha256(data, len, out);
 }
 
 /* ── SHA-512 of a buffer ─────────────────────────────────── */
 static void sha512_buf(const uint8_t* data, size_t len, char out_hex[129]) {
-    uint8_t hash[64];
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(ctx, EVP_sha512(), NULL);
-    EVP_DigestUpdate(ctx, data, len);
-    unsigned int md_len = 64;
-    EVP_DigestFinal_ex(ctx, hash, &md_len);
-    EVP_MD_CTX_free(ctx);
-    for (int i = 0; i < 64; i++) {
-        snprintf(out_hex + i*2, 3, "%02x", hash[i]);
-    }
+    /* SHA-512 not available without OpenSSL in NDK 25.
+     * Use two independent SHA-256 hashes to produce 64 bytes.
+     * chunk_constants_gen.py stores SHA256_HASH and uses same algo for SHA512 slot. */
+    uint8_t h1[32], h2[32];
+    sha256(data, len, h1);
+    /* Second: sha256(h1 || first 32 bytes of data) */
+    uint8_t combined[64];
+    memcpy(combined, h1, 32);
+    size_t n = len < 32 ? len : 32;
+    memcpy(combined + 32, data, n);
+    sha256(combined, 32 + n, h2);
+    int i;
+    for (i = 0; i < 32; i++) snprintf(out_hex + i*2,    3, "%02x", h1[i]);
+    for (i = 0; i < 32; i++) snprintf(out_hex + 64+i*2, 3, "%02x", h2[i]);
     out_hex[128] = '\0';
 }
 
@@ -151,7 +149,7 @@ static jobject do_load_companion_dex(JNIEnv* env, jobject thiz,
     get_android_id_hash(env, context, android_id_hash);
 
     uint8_t aes_key[32], aes_iv[12];
-    if (!derive_aes_key(android_id_hash, aes_key, aes_iv)) {
+    if (!nova_derive_aes_key(android_id_hash, aes_key, aes_iv)) {
         secure_wipe(android_id_hash, 32);
         goto cleanup;
     }
@@ -159,7 +157,7 @@ static jobject do_load_companion_dex(JNIEnv* env, jobject thiz,
 
     /* Step 5: Decrypt AES-256-GCM */
     size_t decrypted_len = 0;
-    decrypted = aes256_gcm_decrypt(reassembled, reassembled_len,
+    decrypted = nova_aes256_gcm_decrypt(reassembled, reassembled_len,
                                     aes_key, aes_iv, &decrypted_len);
 
     /* Wipe key and IV immediately after use */
