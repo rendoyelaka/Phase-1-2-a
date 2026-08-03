@@ -236,9 +236,7 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
     print(f"  Chunks: {n_chunks}")
     print(f"  XOR key: 0x{xor_key:08X} (split as HI=0x{xor_hi:04X} LO=0x{xor_lo:04X})")
 
-    # Also generate C header for Phase 4 native engine
-    if hasattr(args, 'out_h') and args.out_h:
-        generate_c_header(args.manifest, args.out_h, args.package)
+
 
 
 
@@ -351,6 +349,10 @@ def main():
     args = parser.parse_args()
 
     generate_chunk_constants(args.manifest, args.out_kt, args.package)
+
+    # Phase 4: Generate C header if --out-h provided
+    if args.out_h:
+        generate_c_header(args.manifest, args.out_h, args.package)
 
 
 if __name__ == '__main__':
