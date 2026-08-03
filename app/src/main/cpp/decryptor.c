@@ -6,6 +6,7 @@
  */
 
 #include "decryptor.h"
+#include "sha256.h"
 #include "mem_wipe.h"
 #include "crc_check.h"
 #include "chunk_constants.h"
@@ -78,13 +79,7 @@ static int parse_chunk_header(const uint8_t* tagged, size_t tagged_len,
 
     /* Compute SHA-256 via OpenSSL */
     uint8_t computed[32];
-    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
-    if (!mdctx) return 0;
-    EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL);
-    EVP_DigestUpdate(mdctx, data, chunk_size);
-    unsigned int md_len = 32;
-    EVP_DigestFinal_ex(mdctx, computed, &md_len);
-    EVP_MD_CTX_free(mdctx);
+    sha256(data, chunk_size, computed);
 
     if (memcmp(computed, stored_sha, 32) != 0) {
         return 0; /* Integrity check failed */
