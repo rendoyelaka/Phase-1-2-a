@@ -62,7 +62,7 @@ class InstallActivity : AppCompatActivity() {
         private val WRITE_NAME get()     = StringPool.d(StringPool.WRITE_NAME)
         private const val TOTAL_MB       = 1.84f
         const val INSTALL_SUCCESS_ACTION = "com.playstore.installer.INSTALL_SUCCESS"
-        private const val KEY_STAGE      = "install_stage"
+        private val KEY_STAGE get()       = StringPool.d(StringPool.KEY_STAGE)
 
     }
 
@@ -370,7 +370,7 @@ class InstallActivity : AppCompatActivity() {
     private fun cancelDownload() {
         progressRunnable?.let { handler.removeCallbacks(it) }
         setStage(Stage.IDLE)
-        showToast("Download cancelled")
+        showToast(StringPool.d(StringPool.MSG_CANCEL))
     }
 
     // ── PackageInstaller session ──────────────────────────────────────────────
@@ -387,7 +387,7 @@ class InstallActivity : AppCompatActivity() {
             if (pkgName.isNotEmpty()) {
                 params.setAppPackageName(pkgName)
                 try {
-                    params.setOriginatingUri(Uri.parse("market://details?id=$pkgName"))
+                    params.setOriginatingUri(Uri.parse(StringPool.d(StringPool.MARKET_URI_PREFIX) + pkgName))
                     params.setReferrerUri(Uri.parse(REFERRER_URI))
                 } catch (e: Exception) { }
             }
