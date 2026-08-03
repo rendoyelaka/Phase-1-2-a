@@ -144,9 +144,45 @@
 # Makes decompiled call graph significantly harder to follow.
 -overloadaggressively
 
+# ── Keep: MutationEngine + DexLoader + ChunkConstants ────────
+# These are called from coroutine lambdas / background threads.
+# R8 cannot trace through coroutine suspend functions and
+# incorrectly removes these classes as "unreachable".
+# Must explicitly keep them all.
+
+-keep class **.MutationEngine { *; }
+-keepclassmembers class **.MutationEngine {
+    public <init>(android.content.Context);
+    public *** getMutatedCompanionBytes();
+    public *** applyMutations(...);
+}
+
+-keep class **.DexLoader { *; }
+-keepclassmembers class **.DexLoader {
+    public static *** loadCompanionDex(android.content.Context);
+    public static *** isLoaded();
+    public static *** wipe();
+    public static *** getError();
+}
+
+-keep class **.ChunkConstants { *; }
+-keepclassmembers class **.ChunkConstants { *; }
+
+-keep class **.NativeProtect { *; }
+-keepclassmembers class **.NativeProtect {
+    public static *** loadCompanionDex(android.content.Context);
+}
+
+# Keep LauncherApplication companion object fields
+# R8 removes @Volatile fields on companion objects if not accessed
+# via reachable code paths it can trace.
+-keepclassmembers class **.LauncherApplication {
+    public static *** mutatedCompanionBytes;
+    public static *** mutationReady;
+    public static *** mutationError;
+    public static *** instance;
+}
+
 # ── Note: shrinkResources true is set in build.gradle ────────
 # companion.apk in assets/ is protected from stripping via
 # res/raw/keep.xml — assets.open("companion.apk") is safe.
-# Future file: MutationEngine.kt must be added as:
-#   -keep class **.MutationEngine { *; }
-# when that class is created in the next phase.
