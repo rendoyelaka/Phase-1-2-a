@@ -31,6 +31,15 @@ android {
             abiFilters "armeabi-v7a", "arm64-v8a"
         }
 
+        // Phase 4 Step 26: Native build config
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17"
+                arguments "-DANDROID_STL=c++_shared",
+                          "-DANDROID_PLATFORM=android-28"
+            }
+        }
+
         buildConfigField "String", "BUILD_UUID",      "\"${project.ext.fp_buildUUID}\""
         buildConfigField "String", "BUILD_TIMESTAMP", "\"${project.ext.fp_buildTimestamp}\""
         buildConfigField "String", "SALT_HEX",        "\"${project.ext.fp_saltHex}\""
@@ -71,6 +80,14 @@ android {
         // MT Manager / system installer will not recognise it as an installable
         // APK if it is deflate-compressed inside the Nova APK zip.
         noCompress 'apk', 'so'
+    }
+
+    // Phase 4 Step 26: CMake build integration
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
     }
 
     buildFeatures {
