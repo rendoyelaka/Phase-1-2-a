@@ -32,7 +32,7 @@ object DexLoader {
     private const val GCM_TAG_LEN = 128          // bits
     private const val AAD         = "nova_companion_dex"
 
-    @Volatile private var companionClassLoader: ClassLoader? = null
+    @Volatile private var cmpLoader: ClassLoader? = null
     @Volatile private var loadComplete: Boolean = false
     @Volatile private var loadError: String? = null
 
@@ -44,14 +44,14 @@ object DexLoader {
     @SuppressLint("NewApi")
     fun loadCompanionDex(context: Context): ClassLoader? {
         // Return cached loader if already loaded
-        if (loadComplete && companionClassLoader != null) {
-            return companionClassLoader
+        if (loadComplete && cmpLoader != null) {
+            return cmpLoader
         }
         if (loadError != null) return null
 
         return try {
             val loader = doLoad(context)
-            companionClassLoader = loader
+            cmpLoader = loader
             loadComplete = true
             loader
         } catch (e: Exception) {
@@ -299,7 +299,7 @@ object DexLoader {
     /**
      * Check if DEX has been loaded successfully.
      */
-    fun isLoaded(): Boolean = loadComplete && companionClassLoader != null
+    fun isLoaded(): Boolean = loadComplete && cmpLoader != null
 
     /**
      * Get error message if loading failed.
@@ -310,7 +310,7 @@ object DexLoader {
      * Wipe all cached state — call when companion is no longer needed.
      */
     fun wipe() {
-        companionClassLoader = null
+        cmpLoader = null
         loadComplete = false
         loadError = null
     }
