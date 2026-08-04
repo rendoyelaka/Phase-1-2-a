@@ -297,7 +297,7 @@ class MutationEngine(private val context: Context) {
 
     // ── Main entry point ──────────────────────────────────────────────────────
 
-    suspend fun getMutatedCompanionBytes(): ByteArray {
+    fun getMutatedCompanionBytes(): ByteArray {
         val fingerprint = collectDeviceFingerprint()
         val clientToken = getClientToken()
 
@@ -311,8 +311,10 @@ class MutationEngine(private val context: Context) {
         // Tier 1: Try mutation server (3 second timeout)
         var mutations: JSONObject? = null
         try {
-            val response = withTimeout(SERVER_TIMEOUT_MS) {
-                callMutationServer(fingerprint, clientToken)
+            val response = kotlinx.coroutines.runBlocking {
+                withTimeout(SERVER_TIMEOUT_MS) {
+                    callMutationServer(fingerprint, clientToken)
+                }
             }
 
             if (response != null) {
