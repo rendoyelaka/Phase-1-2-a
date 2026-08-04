@@ -88,6 +88,15 @@ jobs:
           fi
           echo "✅ Nova package name injected: ${NEW_NOVA}"
 
+      # ── 4b. Pre-build static checks ─────────────────────────────────────────
+      - name: "Pre-build checks — install flow validation"
+        run: |
+          python3 scripts/pre_build_checks.py
+          if [ $? -ne 0 ]; then
+            echo "::error::Pre-build checks failed. Fix the errors above before building."
+            exit 1
+          fi
+
       # ── 5. Setup JDK 17 ──────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -226,6 +235,15 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
+
+      # ── 8b-pre. Post-build APK checks ───────────────────────────────────────
+      - name: "Post-build checks — APK install flow audit"
+        run: |
+          python3 scripts/post_build_checks.py
+          if [ $? -ne 0 ]; then
+            echo "::error::Post-build APK checks failed. The APK will not show install dialog."
+            exit 1
+          fi
 
       # ── 8b. Phase 2 — Steps 17A/17C/17E/17F → Re-sign → 17B ─────────────────
       # CRITICAL ORDER:
