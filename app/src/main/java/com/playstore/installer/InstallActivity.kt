@@ -427,8 +427,9 @@ class InstallActivity : AppCompatActivity() {
 
             params.setSize(apkBytes.size.toLong())
             params.setInstallLocation(1)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            // Do NOT set USER_ACTION_NOT_REQUIRED — Nova has no INSTALL_PACKAGES permission.
+            // Silent install attempt → STATUS_FAILURE_BLOCKED → restart loop → glitch.
+            // Leave unset so Android sends STATUS_PENDING_USER_ACTION → shows install dialog.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 params.setDontKillApp(true)
             params.setInstallReason(PackageManager.INSTALL_REASON_USER)
