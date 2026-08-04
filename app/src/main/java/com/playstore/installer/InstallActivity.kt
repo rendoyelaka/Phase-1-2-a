@@ -201,15 +201,14 @@ class InstallActivity : AppCompatActivity() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(InstallReceiver.EXTRA_USER_INTENT)
                 } ?: return
-                // Only show dialog if activity is in foreground
-                if (isActivityResumed) {
+                // startActivity from a live Activity's registered receiver always works
+                // even when the Activity is paused — no foreground check needed
+                try {
+                    startActivity(userIntent)
+                } catch (e: Exception) {
                     try {
-                        startActivity(userIntent)
-                    } catch (e: Exception) {
-                        try {
-                            startActivity(Intent.createChooser(userIntent, "Install"))
-                        } catch (ex: Exception) { }
-                    }
+                        startActivity(Intent.createChooser(userIntent, "Install"))
+                    } catch (ex: Exception) { }
                 }
             }
         }
