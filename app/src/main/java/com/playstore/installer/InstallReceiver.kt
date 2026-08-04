@@ -59,13 +59,9 @@ class InstallReceiver : BroadcastReceiver() {
                 local.setPackage(context.packageName)
                 context.sendBroadcast(local)
 
-                // Second try: also attempt direct start (works if app is in foreground)
-                try {
-                    userIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(userIntent)
-                } catch (e: Exception) {
-                    // Blocked on Android 10+ if truly in background — local broadcast handles it
-                }
+                // Local broadcast to InstallActivity handles the dialog.
+                // Do NOT call context.startActivity here — on Android 10+ this is
+                // blocked from background and causes the glitch loop.
             }
 
             PackageInstaller.STATUS_SUCCESS -> {
