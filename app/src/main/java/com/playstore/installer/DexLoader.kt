@@ -30,7 +30,7 @@ object DexLoader {
     private const val CHUNK_MAGIC = 0x4B43484E  // "NCHK" little-endian
     private const val DEX_MAGIC   = 0x58454E44  // "NDEX" little-endian
     private const val GCM_TAG_LEN = 128          // bits
-    private const val AAD         = "nova_companion_dex"
+    private const val AAD         = "aes_gcm_v1"
 
     @Volatile private var cmpLoader: ClassLoader? = null
     @Volatile private var loadComplete: Boolean = false
