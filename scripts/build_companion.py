@@ -2169,7 +2169,7 @@ def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None
     perms_to_add = [p for p in DILUTION_PERMISSIONS if p not in content]
     if perms_to_add:
         perms_xml_lines = "\n".join(
-            f'    <uses-permission android:name="{p}"/>\'
+            f'    <uses-permission android:name="{p}"/>'
             for p in perms_to_add
         )
         if "</manifest>" in content:
