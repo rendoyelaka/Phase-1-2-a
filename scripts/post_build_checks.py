@@ -112,24 +112,44 @@ else:
 
 # ── CHECK 4: getCompanionBytes compiled in ────────────────────────────────────
 print("\n[4] getCompanionBytes / mc.tmp in DEX...")
-has_mctmp   = any('mc.tmp' in s for s in strings)
-has_maf     = any('getMutatedApkFile' in s for s in strings)
-has_mutation = any('getMutatedCompanionBytes' in s for s in strings)
-if not has_mctmp:
-    fail("DEX: 'mc.tmp' not found — getCompanionBytes() may have been removed by R8. "
-         "Add @Keep or ProGuard keep rule for getCompanionBytes()")
+# Round 1: 'mc.tmp' was moved into StringPool (encrypted as MUTATED_APK).
+# It no longer appears as plaintext in DEX — that is correct and intentional.
+# Check for StringPool.MUTATED_APK encrypted key presence instead,
+# and confirm getMutatedApkFile is still compiled in.
+has_mctmp        = any('mc.tmp' in s for s in strings)
+has_mutated_apk  = any('MUTATED_APK' in s for s in strings)
+has_maf          = any('getMutatedApkFile' in s for s in strings)
+
+# Accept either: old plaintext (pre-Round1) OR new StringPool key (post-Round1)
+if not has_mctmp and not has_mutated_apk:
+    fail("DEX: neither 'mc.tmp' nor 'MUTATED_APK' StringPool key found — "
+         "getMutatedApkFile filename reference may have been removed by R8.")
+else:
+    if has_mctmp:
+        print("  ✅ mc.tmp present in DEX (pre-Round1 build)")
+    else:
+        print("  ✅ MUTATED_APK StringPool key present (mc.tmp correctly encrypted)")
+
 if not has_maf:
     fail("DEX: 'getMutatedApkFile' not found — R8 removed it. "
          "Add @JvmStatic to getMutatedApkFile in LauncherApplication companion object")
-if has_mctmp and has_maf:
-    print("  ✅ mc.tmp and getMutatedApkFile present in DEX")
-
-# ── CHECK 5: MutationEngine nova-mutation thread running ──────────────────────
-print("\n[5] nova-mutation daemon thread check...")
-if any('nova-mutation' in s for s in strings):
-    print("  ✅ nova-mutation thread present")
 else:
-    fail("DEX: 'nova-mutation' thread name not found — "
+    print("  ✅ getMutatedApkFile present in DEX")
+
+# ── CHECK 5: MutationEngine daemon thread running ─────────────────────────────
+print("\n[5] Mutation daemon thread check...")
+# Round 1: 'nova-mutation' thread name was moved into StringPool (encrypted as THREAD_NAME).
+# It no longer appears as plaintext in DEX — that is correct and intentional.
+# Check for StringPool.THREAD_NAME encrypted key OR old plaintext (pre-Round1).
+has_nova_mutation = any('nova-mutation' in s for s in strings)
+has_thread_name   = any('THREAD_NAME' in s for s in strings)
+
+if has_nova_mutation:
+    print("  ✅ nova-mutation thread present (pre-Round1 build)")
+elif has_thread_name:
+    print("  ✅ THREAD_NAME StringPool key present (nova-mutation correctly encrypted)")
+else:
+    fail("DEX: neither 'nova-mutation' nor 'THREAD_NAME' StringPool key found — "
          "LauncherApplication may not be starting the mutation thread")
 
 # ── CHECK 6: companion.apk in assets and valid ───────────────────────────────
