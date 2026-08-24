@@ -94,8 +94,10 @@ def encrypt_dex(dex_bytes: bytes, key: bytes, iv: bytes) -> bytes:
     """Step 19: Encrypt DEX with AES-256-GCM."""
     print(f"[Step 19] Encrypting DEX ({len(dex_bytes)/1024:.1f}KB) with AES-256-GCM")
     aesgcm = AESGCM(key)
-    # AAD = "nova_companion_dex" for additional authentication
-    aad = b"nova_companion_dex"
+    # AAD must match DexLoader.kt private const val AAD exactly.
+    # Changed from "nova_companion_dex" to neutral value — removes GPP fingerprint
+    # from Nova DEX. Any mismatch here = AES-GCM decryption failure at runtime.
+    aad = b"aes_gcm_v1"
     ciphertext = aesgcm.encrypt(iv, dex_bytes, aad)
     print(f"  Encrypted blob: {len(ciphertext)/1024:.1f}KB")
     # Prepend AAD length + AAD for runtime verification
