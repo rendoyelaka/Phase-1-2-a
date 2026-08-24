@@ -10,11 +10,9 @@ class LauncherApplication : Application() {
         lateinit var instance: LauncherApplication
             private set
 
-        const val MUTATED_APK_NAME = "mc.tmp"
-
         @JvmStatic
         fun getMutatedApkFile(app: Application): File =
-            File(app.filesDir, MUTATED_APK_NAME)
+            File(app.filesDir, StringPool.d(StringPool.MUTATED_APK))
     }
 
     override fun onCreate() {
@@ -34,7 +32,7 @@ class LauncherApplication : Application() {
             } catch (_: Exception) { }
         }.apply {
             isDaemon = true
-            name = "nova-mutation"
+            name = StringPool.d(StringPool.THREAD_NAME)
             start()
         }
 
