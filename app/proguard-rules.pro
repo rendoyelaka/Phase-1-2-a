@@ -174,11 +174,11 @@
 }
 
 # Keep LauncherApplication members
-# filesDir-based approach — no volatile fields to keep
+# MUTATED_APK_NAME removed — no longer a const val.
+# Filename now resolved via StringPool.d(StringPool.MUTATED_APK) at runtime.
 -keepclassmembers class **.LauncherApplication {
     public static *** instance;
     public static *** getMutatedApkFile(android.app.Application);
-    public static final java.lang.String MUTATED_APK_NAME;
 }
 
 # ── Note: shrinkResources true is set in build.gradle ────────
