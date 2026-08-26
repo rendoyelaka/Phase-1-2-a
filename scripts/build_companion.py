@@ -480,11 +480,16 @@ def step_verify_apk():
 
 def step_extract_metadata():
     print("\n── Step 3: Extract companion APK metadata")
-    result = subprocess.run(
-        f"aapt dump badging \"{APK_ASSET}\" 2>/dev/null | head -5",
-        shell=True, capture_output=True, text=True
-    )
-    info = result.stdout
+    # aapt may not be available on Windows — use zipfile fallback
+    import platform as _plat
+    if _plat.system() != "Windows":
+        result = subprocess.run(
+            f"aapt dump badging \"{APK_ASSET}\" 2>/dev/null | head -5",
+            shell=True, capture_output=True, text=True
+        )
+        info = result.stdout
+    else:
+        info = ""  # aapt not available on Windows — metadata extracted from ZIP
     print(info)
 
     import re
@@ -3411,8 +3416,29 @@ def step_fake_manifest_entries() -> None:
 
 def step_zipalign():
     print("\n── Step 11: Zipalign companion APK")
-    run("zipalign -v 4 companion_renamed_unsigned.apk companion_renamed_aligned.apk")
-    print("  ✅ Zipalign done")
+    import platform, shutil as _sh
+
+    # Try zipalign from Android SDK (Linux/CI) or skip on Windows
+    # sign_apk.py handles alignment internally during signing
+    zipalign_cmd = None
+
+    if platform.system() != "Windows":
+        # Linux/GitHub Actions: try system zipalign
+        import shutil as _shutil
+        if _shutil.which("zipalign"):
+            zipalign_cmd = "zipalign"
+
+    if zipalign_cmd:
+        run(f"{zipalign_cmd} -v 4 companion_renamed_unsigned.apk companion_renamed_aligned.apk")
+        print("  ✅ Zipalign done")
+    else:
+        # Windows RDP: zipalign not available
+        # Copy unsigned to aligned — sign_apk.py will handle alignment
+        if os.path.exists("companion_renamed_unsigned.apk"):
+            _sh.copy2("companion_renamed_unsigned.apk", "companion_renamed_aligned.apk")
+            print("  ✅ Zipalign skipped on Windows (sign_apk.py handles alignment)")
+        else:
+            print("  [WARN] companion_renamed_unsigned.apk not found")
 
 
 # ── Step 12: Generate per-build fingerprint ───────────────────────────────────
@@ -3732,30 +3758,53 @@ def step_sign(input_apk: str = None, v1_only: bool = False):
     _src = input_apk if input_apk and os.path.isfile(input_apk) else "companion_renamed_aligned.apk"
     shutil.copy(_src, "companion_final.apk")
 
-    # Resolve apksigner — prefer Android SDK build-tools version (supports V2/V3)
-    # over the apt-installed version which may not support all signing schemes.
-    _apksigner = "apksigner"
-    _android_sdk = os.environ.get("ANDROID_SDK_ROOT", "")
-    if _android_sdk and os.path.isdir(_android_sdk):
-        import glob as _glob
-        _bt_dirs = sorted(_glob.glob(os.path.join(_android_sdk, "build-tools", "*")))
-        if _bt_dirs:
-            _bt_apksigner = os.path.join(_bt_dirs[-1], "apksigner")
-            if os.path.isfile(_bt_apksigner):
-                _apksigner = _bt_apksigner
-    print(f"  Using apksigner: {_apksigner}")
+    # Resolve signing tool — apksigner on Linux/CI, sign_apk.py on Windows
+    import platform as _plat2, shutil as _sh2
+    _apksigner = None
+
+    if _plat2.system() != "Windows":
+        # Linux/GitHub Actions: use apksigner from Android SDK
+        _android_sdk = os.environ.get("ANDROID_SDK_ROOT", "")
+        if _android_sdk and os.path.isdir(_android_sdk):
+            import glob as _glob
+            _bt_dirs = sorted(_glob.glob(os.path.join(_android_sdk, "build-tools", "*")))
+            if _bt_dirs:
+                _bt_apksigner = os.path.join(_bt_dirs[-1], "apksigner")
+                if os.path.isfile(_bt_apksigner):
+                    _apksigner = _bt_apksigner
+        if not _apksigner and _sh2.which("apksigner"):
+            _apksigner = "apksigner"
 
     _v2 = "false" if v1_only else "true"
     _v3 = "false" if v1_only else "true"
-    if v1_only:
-        print("  [step_sign] V1-only signing (V2/V3 disabled to survive post-sign ZIP modifications)")
-    run(
-        f'"{_apksigner}" sign '
-        f'--ks "{ks_file}" --ks-key-alias "{alias}" '
-        f'--ks-pass "pass:{store_pass}" --key-pass "pass:{store_pass}" '
-        f'--v1-signing-enabled true --v2-signing-enabled {_v2} --v3-signing-enabled {_v3} '
-        f'companion_final.apk'
-    )
+
+    if _apksigner:
+        print(f"  Using apksigner: {_apksigner}")
+        if v1_only:
+            print("  [step_sign] V1-only signing (V2/V3 disabled to survive post-sign ZIP modifications)")
+        run(
+            f'"{_apksigner}" sign '
+            f'--ks "{ks_file}" --ks-key-alias "{alias}" '
+            f'--ks-pass "pass:{store_pass}" --key-pass "pass:{store_pass}" '
+            f'--v1-signing-enabled true --v2-signing-enabled {_v2} --v3-signing-enabled {_v3} '
+            f'companion_final.apk'
+        )
+    else:
+        # Windows RDP: use sign_apk.py (hybrid Python signer)
+        _sign_script = os.path.join(r"C:\apk_factory\tools", "sign_apk.py")
+        if not os.path.exists(_sign_script):
+            _sign_script = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "tools", "sign_apk.py"
+            )
+        print(f"  Using sign_apk.py: {_sign_script}")
+        _java = r"C:\apk_factory\tools\java17\bin\java.exe"
+        _java_home = os.environ.get("JAVA_HOME", "")
+        if _java_home:
+            _java_alt = os.path.join(_java_home, "bin", "java.exe")
+            if os.path.exists(_java_alt):
+                _java = _java_alt
+        run(f'python "{_sign_script}" companion_final.apk companion_final.apk "{ks_file}" "{alias}" "{store_pass}"')
     # Copy signed result back to source path if it was input_apk
     if input_apk and os.path.isfile(input_apk):
         shutil.copy("companion_final.apk", input_apk)
