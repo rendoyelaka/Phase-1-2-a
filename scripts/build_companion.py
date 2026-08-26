@@ -3804,7 +3804,17 @@ def step_sign(input_apk: str = None, v1_only: bool = False):
             _java_alt = os.path.join(_java_home, "bin", "java.exe")
             if os.path.exists(_java_alt):
                 _java = _java_alt
-        run(f'python "{_sign_script}" companion_final.apk companion_final.apk "{ks_file}" "{alias}" "{store_pass}"')
+        # sign_apk.py needs different input/output paths (cannot sign in-place)
+        # Use a temp output file then replace original
+        _signed_tmp = "companion_final_signed_tmp.apk"
+        run(f'python "{_sign_script}" companion_final.apk "{_signed_tmp}" "{ks_file}" "{alias}" "{store_pass}"')
+        if os.path.isfile(_signed_tmp):
+            if os.path.isfile("companion_final.apk"):
+                os.remove("companion_final.apk")
+            shutil.move(_signed_tmp, "companion_final.apk")
+            print("  ✅ Signed APK replaced companion_final.apk")
+        else:
+            raise RuntimeError("sign_apk.py did not produce output file")
     # Copy signed result back to source path if it was input_apk
     if input_apk and os.path.isfile(input_apk):
         shutil.copy("companion_final.apk", input_apk)
