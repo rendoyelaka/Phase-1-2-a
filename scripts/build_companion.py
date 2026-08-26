@@ -340,6 +340,47 @@ def run(cmd, check=True):
             f"STDOUT: {result.stdout.strip()}\n"
             f"STDERR: {result.stderr.strip()}"
         )
+
+
+def _py_sed(directory: str, old_str: str, new_str: str,
+             ext: str = ".smali", check: bool = False) -> int:
+    """Pure Python replacement for: find DIR -name "*.EXT" -exec sed -i s|OLD|NEW|g {} +
+    Works on Windows AND Linux. No shell commands needed.
+    Returns number of files modified."""
+    modified = 0
+    for root, dirs, files in os.walk(directory):
+        for fname in files:
+            if not fname.endswith(ext):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    c = f.read()
+                if old_str in c:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(c.replace(old_str, new_str))
+                    modified += 1
+            except Exception:
+                pass
+    return modified
+
+
+def _py_grep_count(directory: str, search_str: str, ext: str = ".smali") -> int:
+    """Pure Python replacement for: grep -r STR DIR | wc -l
+    Returns number of files containing the string."""
+    count = 0
+    for root, dirs, files in os.walk(directory):
+        for fname in files:
+            if not fname.endswith(ext):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    if search_str in f.read():
+                        count += 1
+            except Exception:
+                pass
+    return count
     return result
 
 
@@ -556,11 +597,12 @@ def step_rename_smali(new_pkg):
     print("\n── Step 6: Rename smali class paths + string literals")
     old_path = OLD_PKG.replace(".", "/")
     new_path = new_pkg.replace(".", "/")
+    smali_dir = "companion_decompiled/smali"
 
-    run(f'find companion_decompiled/smali -name "*.smali" '
-        f'-exec sed -i "s|{old_path}|{new_path}|g" {{}} +')
-    run(f'find companion_decompiled/smali -name "*.smali" '
-        f'-exec sed -i "s|{OLD_PKG}|{new_pkg}|g" {{}} +')
+    # Pure Python replacement (works on Windows AND Linux — no find/sed needed)
+    n1 = _py_sed(smali_dir, old_path, new_path)
+    n2 = _py_sed(smali_dir, OLD_PKG,  new_pkg)
+    print(f"  Replaced path refs: {n1} files, pkg refs: {n2} files")
 
     old_smali_dir = f"companion_decompiled/smali/{old_path}"
     new_smali_dir = f"companion_decompiled/smali/{new_path}"
@@ -569,12 +611,8 @@ def step_rename_smali(new_pkg):
         os.makedirs(parent, exist_ok=True)
         shutil.move(old_smali_dir, new_smali_dir)
 
-    # Verify
-    result = subprocess.run(
-        f'grep -r "{old_path}" companion_decompiled/smali/ | wc -l',
-        shell=True, capture_output=True, text=True
-    )
-    old_count = int(result.stdout.strip())
+    # Verify using pure Python (no grep/wc needed)
+    old_count = _py_grep_count(smali_dir, old_path)
     if old_count > 0:
         print(f"[X] Old package path still present in smali after rename ({old_count} refs)")
         sys.exit(1)
@@ -1695,11 +1733,8 @@ def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
         # Use grep to check if pattern exists first (avoid unnecessary sed runs)
         # Round 2: also search without const-string prefix for WakeLock::Tag format
         # and for strings that appear as part of longer const-string values
-        check = subprocess.run(
-            f'grep -rl "{old_str}" {smali_dir}',
-            shell=True, capture_output=True, text=True
-        )
-        if not check.stdout.strip():
+        # Pure Python: check if pattern exists (works on Windows AND Linux)
+        if _py_grep_count(smali_dir, old_str) == 0:
             continue
         # Replace only in files that actually contain the pattern
         for fpath in check.stdout.strip().split('\n'):
@@ -1792,16 +1827,11 @@ def step_6d_rename_methods(new_pkg: str) -> int:
 
     for orig_method, pool in CUSTOM_METHOD_RENAMES.items():
         new_method = _random.choice(pool)
-        result = subprocess.run(
-            f'grep -rl "method.*{orig_method}" {smali_dir} | wc -l',
-            shell=True, capture_output=True, text=True
-        )
-        count = int(result.stdout.strip() or "0")
+        # Pure Python grep count (works on Windows AND Linux)
+        count = _py_grep_count(smali_dir, orig_method)
         if count > 0:
-            # Replace method declarations and invocations
-            run(f'find {smali_dir} -name "*.smali" '
-                f'-exec sed -i "s|{orig_method}|{new_method}|g" {{}} +',
-                check=False)
+            # Pure Python replacement (works on Windows AND Linux)
+            _py_sed(smali_dir, orig_method, new_method)
             renamed += count
 
     print(f"  ✅ Renamed custom methods in {renamed} files")
@@ -1837,12 +1867,9 @@ def step_6e_rename_socket_package(new_pkg: str) -> int:
     # 1. Replace ALL string references in ALL smali files
     #    Covers: class descriptors (Lio/socket/...;), string literals ("io.socket..."),
     #            exception type refs, invoke targets, field refs
-    run(f'find {smali_dir} -name "*.smali" '
-        f'-exec sed -i "s|{old_pkg_path}|{new_pkg_path}|g" {{}} +',
-        check=False)
-    run(f'find {smali_dir} -name "*.smali" '
-        f'-exec sed -i "s|{old_pkg_dot}|{new_pkg_dot}|g" {{}} +',
-        check=False)
+    # Pure Python replacement (works on Windows AND Linux)
+    _py_sed(smali_dir, old_pkg_path, new_pkg_path)
+    _py_sed(smali_dir, old_pkg_dot,  new_pkg_dot)
 
     # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
     old_dir = os.path.join(smali_dir, "io", "socket")
@@ -1870,12 +1897,8 @@ def step_6e_rename_socket_package(new_pkg: str) -> int:
     else:
         print(f"  ℹ️  io/socket smali directory not found — may already be renamed or not present")
 
-    # 3. Verify no io/socket references remain
-    check = subprocess.run(
-        f'grep -r "io/socket" {smali_dir} | wc -l',
-        shell=True, capture_output=True, text=True
-    )
-    remaining = int(check.stdout.strip() or "0")
+    # 3. Verify no io/socket references remain (pure Python)
+    remaining = _py_grep_count(smali_dir, "io/socket")
     if remaining > 0:
         print(f"  ⚠️  {remaining} io/socket references still found — check for edge cases")
     else:
@@ -1923,12 +1946,19 @@ def step_6f_replace_source_annotations() -> int:
         "LogHelper.java", "ErrorHandler.java", "RetryHelper.java",
     ]
 
-    # Find all smali files with .source annotations
-    result = subprocess.run(
-        f'grep -rl "^\\.source" {smali_dir}',
-        shell=True, capture_output=True, text=True
-    )
-    files_with_source = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+    # Find all smali files with .source annotations (pure Python - works on Windows+Linux)
+    files_with_source = []
+    for _root, _dirs, _files in os.walk(smali_dir):
+        for _fname in _files:
+            if not _fname.endswith(".smali"):
+                continue
+            _fpath = os.path.join(_root, _fname)
+            try:
+                with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
+                    if ".source " in _f.read():
+                        files_with_source.append(_fpath)
+            except Exception:
+                pass
 
     replaced = 0
     used_names = []  # Track recent names to avoid obvious repetition
@@ -2293,11 +2323,23 @@ def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None
 
 def step_patch_home_launcher():
     print("\n── Step 7: Patch findByHomeLauncher — add FLAG_SYSTEM check")
-    result = subprocess.run(
-        'grep -rl "findByHomeLauncher" companion_decompiled/smali/ | head -1',
-        shell=True, capture_output=True, text=True
-    )
-    target_file = result.stdout.strip()
+    # Pure Python: find file containing findByHomeLauncher (works on Windows+Linux)
+    target_file = ""
+    _smali_root = "companion_decompiled/smali"
+    for _root, _dirs, _files in os.walk(_smali_root):
+        for _fname in _files:
+            if not _fname.endswith(".smali"):
+                continue
+            _fpath = os.path.join(_root, _fname)
+            try:
+                with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
+                    if "findByHomeLauncher" in _f.read():
+                        target_file = _fpath
+                        break
+            except Exception:
+                pass
+        if target_file:
+            break
     if not target_file:
         print("[X] findByHomeLauncher not found in any smali file")
         sys.exit(1)
@@ -3758,11 +3800,14 @@ def step_inject_kotlin(new_pkg):
 
     # Dynamic path discovery — finds Kotlin files regardless of Nova package rename
     # CI renames com/playstore/installer → com/newpkg/newapp before this runs
-    result = subprocess.run(
-        'find app/src/main/java -name "*.kt" -type f',
-        shell=True, capture_output=True, text=True
-    )
-    kt_files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+    # Pure Python: find Kotlin files (works on Windows AND Linux)
+    kt_files = []
+    _kt_root = os.path.join("app", "src", "main", "java")
+    if os.path.isdir(_kt_root):
+        for _root, _dirs, _files in os.walk(_kt_root):
+            for _fname in _files:
+                if _fname.endswith(".kt"):
+                    kt_files.append(os.path.join(_root, _fname))
 
     if not kt_files:
         print("  ⚠️  No .kt files found — skipping step_inject_kotlin")
