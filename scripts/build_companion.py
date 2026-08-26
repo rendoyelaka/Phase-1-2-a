@@ -47,6 +47,48 @@ import shutil
 sys.path.insert(0, os.path.dirname(__file__))
 from unicode_folder_nest import inject_unicode_nest
 
+# ── Platform-aware tool paths ─────────────────────────────────────────────────
+# On Windows RDP: tools are in C:\apk_factory\tools\
+# On GitHub Actions Linux: apktool is in /usr/local/bin/apktool
+def _find_apktool_cmd():
+    """Return the correct apktool command for the current platform."""
+    import platform, shutil as _sh
+    if platform.system() == "Windows":
+        # Windows RDP: use java -jar apktool.jar
+        _factory = r"C:\apk_factory\tools"
+        _java    = os.path.join(_factory, "java17", "bin", "java.exe")
+        _jar     = os.path.join(_factory, "apktool.jar")
+        # Also check JAVA_HOME env
+        _java_home = os.environ.get("JAVA_HOME", "")
+        if _java_home:
+            _java_alt = os.path.join(_java_home, "bin", "java.exe")
+            if os.path.exists(_java_alt):
+                _java = _java_alt
+        if os.path.exists(_java) and os.path.exists(_jar):
+            return f'"{_java}" -jar "{_jar}"'
+        # Fallback: java in PATH + jar
+        if os.path.exists(_jar):
+            _java_path = _sh.which("java")
+            if _java_path:
+                return f'"{_java_path}" -jar "{_jar}"'
+        # Last resort: apktool in PATH
+        if _sh.which("apktool"):
+            return "apktool"
+        raise RuntimeError(
+            "apktool not found on Windows.\n"
+            "Expected: C:\\apk_factory\\tools\\apktool.jar\n"
+            "Run setup.bat to install all required tools."
+        )
+    else:
+        # Linux/Mac (GitHub Actions): apktool in PATH
+        if _sh.which("apktool"):
+            return "apktool"
+        raise RuntimeError("apktool not found. Install it first.")
+
+APKTOOL_CMD = _find_apktool_cmd()
+print(f"  [INFO] apktool command: {APKTOOL_CMD[:60]}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 # ── BLAKE3 pure-Python implementation (Step 3 & 9 — independent second hash) ─
 # Self-contained; no external dependency required.
@@ -504,7 +546,7 @@ def step_decompile():
     print("\n── Step 5: Decompile companion APK (smali only)")
     if os.path.exists("companion_decompiled"):
         shutil.rmtree("companion_decompiled")
-    run(f'apktool d "{APK_ASSET}" -o companion_decompiled --no-res --keep-broken-res')
+    run(f'{APKTOOL_CMD} d "{APK_ASSET}" -o companion_decompiled --no-res --keep-broken-res')
     print("  ✅ Decompile done")
 
 
@@ -2342,7 +2384,7 @@ def step_rebuild_dex():
     # Without this, apktool's incremental cache may fail on newly injected files
     if os.path.isdir("companion_decompiled/build"):
         shutil.rmtree("companion_decompiled/build")
-    run('apktool b companion_decompiled -o smali_rebuilt.apk --no-res')
+    run(f'{APKTOOL_CMD} b companion_decompiled -o smali_rebuilt.apk --no-res')
 
     if not os.path.isfile("smali_rebuilt.apk") or os.path.getsize("smali_rebuilt.apk") == 0:
         print("[X] apktool repackage failed or produced empty file")
