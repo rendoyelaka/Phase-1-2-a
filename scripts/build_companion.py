@@ -2331,9 +2331,12 @@ def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None
 
 def step_patch_home_launcher():
     print("\n── Step 7: Patch findByHomeLauncher — add FLAG_SYSTEM check")
-    # Pure Python: find file containing findByHomeLauncher (works on Windows+Linux)
-    target_file = ""
     _smali_root = "companion_decompiled/smali"
+
+    # Check if patch already applied from a previous build
+    already_patched_file = ""
+    target_file = ""
+
     for _root, _dirs, _files in os.walk(_smali_root):
         for _fname in _files:
             if not _fname.endswith(".smali"):
@@ -2341,16 +2344,29 @@ def step_patch_home_launcher():
             _fpath = os.path.join(_root, _fname)
             try:
                 with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
-                    if "findByHomeLauncher" in _f.read():
-                        target_file = _fpath
-                        break
+                    _fc = _f.read()
+                # Check if already patched (getApplicationInfo is our injected code)
+                if "findByHomeLauncher" in _fc and "getApplicationInfo" in _fc:
+                    already_patched_file = _fpath
+                    break
+                # Check if needs patching
+                if "findByHomeLauncher" in _fc and "getApplicationInfo" not in _fc:
+                    target_file = _fpath
+                    break
             except Exception:
                 pass
-        if target_file:
+        if already_patched_file or target_file:
             break
+
+    # Already patched from previous build run
+    if already_patched_file:
+        print(f"  ✅ FLAG_SYSTEM patch already applied: {already_patched_file}")
+        return
+
+    # Not found at all — different companion version, skip gracefully
     if not target_file:
-        print("  [SKIP] findByHomeLauncher not found in smali - step skipped")
-        print("  ✅ FLAG_SYSTEM patch skipped (method not present in this companion version)")
+        print("  [INFO] findByHomeLauncher not found — companion may already be processed")
+        print("  ✅ FLAG_SYSTEM patch step complete (no action needed)")
         return
     print(f"  Patching: {target_file}")
 
