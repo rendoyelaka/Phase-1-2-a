@@ -1,0 +1,39 @@
+# Build artifacts - never commit these
+companion_decompiled/
+companion_final.apk
+companion_renamed_aligned.apk
+companion_renamed_unsigned.apk
+companion_final_signed_tmp.apk
+smali_rebuilt.apk
+new_classes.dex
+*.jks
+*.keystore
+companion_ks_*.jks
+
+# Temp build files
+*.tmp
+b64.tmp
+sdl.py
+signer_dl.py
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Gradle build outputs
+build/
+.gradle/
+local.properties
+*.iml
+.idea/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
