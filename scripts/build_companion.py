@@ -3400,8 +3400,16 @@ def step_decoy_noise_files(build_hash: str) -> None:
 
     with zipfile.ZipFile(apk_path, "r") as zin, \
          zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        # Copy existing entries — skip any that we are about to inject fresh
+        # This prevents duplicate ZIP entries when companion was already processed
+        existing_names = set(zin.namelist())
+        decoy_names    = set(all_decoys.keys())
         for item in zin.infolist():
+            if item.filename in decoy_names:
+                # Skip old decoy — will be replaced with fresh data below
+                continue
             zout.writestr(item, zin.read(item.filename))
+        # Inject fresh decoy files (always new content per build)
         for fname, data in all_decoys.items():
             zout.writestr(fname, data)
             print(f"  + {fname} ({len(data)} bytes)")
