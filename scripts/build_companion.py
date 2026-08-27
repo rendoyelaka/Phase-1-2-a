@@ -2349,8 +2349,9 @@ def step_patch_home_launcher():
         if target_file:
             break
     if not target_file:
-        print("[X] findByHomeLauncher not found in any smali file")
-        sys.exit(1)
+        print("  [SKIP] findByHomeLauncher not found in smali - step skipped")
+        print("  ✅ FLAG_SYSTEM patch skipped (method not present in this companion version)")
+        return
     print(f"  Patching: {target_file}")
 
     with open(target_file, "r") as f:
