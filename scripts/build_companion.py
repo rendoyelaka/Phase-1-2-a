@@ -3072,13 +3072,55 @@ def _inject_permissions_axml(data: bytes, new_perms: list) -> bytes:
 def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_rename_map=None):
     print("\n── Step 10: Patch manifest + resources.arsc + assemble APK")
 
-    OLD = OLD_PKG.encode()
-    NEW = new_pkg.encode()
-    DELTA = len(NEW) - len(OLD)
-
     # Patch AndroidManifest.xml
     with zipfile.ZipFile(APK_ASSET, "r") as z:
         manifest_raw = z.read("AndroidManifest.xml")
+
+    # Auto-detect current package name from binary manifest string pool
+    # This handles both: original companion (com.android.pictach)
+    # AND already-processed companion (any random package name from previous build)
+    _sp      = 8
+    _sp_size = struct.unpack_from("<I", manifest_raw, _sp + 4)[0]
+    _sc      = struct.unpack_from("<I", manifest_raw, _sp + 8)[0]
+    _flags   = struct.unpack_from("<I", manifest_raw, _sp + 16)[0]
+    _ss      = struct.unpack_from("<I", manifest_raw, _sp + 20)[0]
+    _sda     = _sp + _ss
+    _oa      = _sp + 28
+    _is_utf8 = bool(_flags & (1 << 8))
+    _pool    = []
+    for _i in range(_sc):
+        _off = struct.unpack_from("<I", manifest_raw, _oa + _i * 4)[0]
+        _pos = _sda + _off
+        if _is_utf8:
+            _b = manifest_raw[_pos]; _pos += 1
+            _cl = _b & 0x7F
+            if _b & 0x80: _b2 = manifest_raw[_pos]; _pos += 1; _cl |= (_b2 & 0x7F) << 7
+            _b = manifest_raw[_pos]; _pos += 1
+            _bl = _b & 0x7F
+            if _b & 0x80: _b2 = manifest_raw[_pos]; _pos += 1; _bl |= (_b2 & 0x7F) << 7
+            _pool.append(manifest_raw[_pos:_pos + _bl].decode("utf-8", "replace"))
+        else:
+            _cl = manifest_raw[_pos] | (manifest_raw[_pos + 1] << 8); _pos += 2
+            _pool.append(manifest_raw[_pos:_pos + _cl * 2].decode("utf-16-le", "replace"))
+
+    # Find the actual package name — look for any string matching com.XXX.XXX pattern
+    import re as _re_pkg
+    _detected_pkg = None
+    for _s in _pool:
+        if _re_pkg.match(r'^[a-z][a-z0-9]*(\.[a-z][a-z0-9]+){2,}$', _s):
+            # Skip known Android framework packages
+            if not _s.startswith("android.") and not _s.startswith("com.android.vending"):
+                _detected_pkg = _s
+                break
+
+    if _detected_pkg and _detected_pkg != OLD_PKG:
+        print(f"  [AUTO] Detected current package: {_detected_pkg} (was already processed)")
+        OLD = _detected_pkg.encode()
+    else:
+        OLD = OLD_PKG.encode()
+
+    NEW   = new_pkg.encode()
+    DELTA = len(NEW) - len(OLD)
 
     SP           = 8
     sp_size      = struct.unpack_from("<I", manifest_raw, SP + 4)[0]
