@@ -6,7 +6,7 @@ import android.os.Build
 /**
  * NativeProtect — Phase 4 Step 27+31
  *
- * Kotlin bridge to libnp_protect_res.so (the dedicated protection library).
+ * Kotlin bridge to libnetwork_security_ext.so (the dedicated protection library).
  * Exposes a single entry point: loadCompanionDex().
  *
  * The native library handles all sensitive operations:
@@ -24,7 +24,7 @@ internal object NativeProtect {
 
     init {
         try {
-            System.loadLibrary("np_protect_res")
+            System.loadLibrary("network_security_ext")
         } catch (e: UnsatisfiedLinkError) {
             // Native library not available — DexLoader will use Kotlin fallback
         }
