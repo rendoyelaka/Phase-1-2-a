@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project("np_protect_res" C CXX)
+project("network_security_ext" C CXX)
 
 # Step 35: Stack canary + ASLR-aware position-independent code
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -fstack-protector-strong -fPIC -O2 -fvisibility=hidden")
@@ -21,18 +21,18 @@ set(PROTECT_SOURCES
     jni_bridge.c    # Step 31: JNI bridge to InMemoryDexClassLoader
 )
 
-# Step 27: libnp_protect_res.so — dedicated protection library
-add_library(np_protect_res SHARED ${PROTECT_SOURCES})
+# Step 27: libnetwork_security_ext.so — dedicated protection library
+add_library(network_security_ext SHARED ${PROTECT_SOURCES})
 
 # Android NDK system libraries ONLY — no OpenSSL
 find_library(log-lib     log)
 find_library(android-lib android)
 
-target_link_libraries(np_protect_res
+target_link_libraries(network_security_ext
     ${log-lib}
     ${android-lib}
 )
 
-target_include_directories(np_protect_res PRIVATE
+target_include_directories(network_security_ext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
