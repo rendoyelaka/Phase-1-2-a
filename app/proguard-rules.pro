@@ -150,27 +150,23 @@
 # incorrectly removes these classes as "unreachable".
 # Must explicitly keep them all.
 
--keep class **.MutationEngine { *; }
+# MutationEngine — class renamed by R8, only Thread target kept
 -keepclassmembers class **.MutationEngine {
     public <init>(android.content.Context);
-    public *** getMutatedCompanionBytes();
-    public *** applyMutations(...);
 }
 
--keep class **.DexLoader { *; }
+# DexLoader — class renamed by R8
 -keepclassmembers class **.DexLoader {
     public static *** loadCompanionDex(android.content.Context);
-    public static *** isLoaded();
-    public static *** wipe();
-    public static *** getError();
 }
 
--keep class **.ChunkConstants { *; }
+# ChunkConstants — class renamed by R8
 -keepclassmembers class **.ChunkConstants { *; }
 
--keep class **.NativeProtect { *; }
+# NativeProtect — class renamed by R8, JNI method kept by native name
 -keepclassmembers class **.NativeProtect {
     public static *** loadCompanionDex(android.content.Context);
+    private static *** nativeLoadDex(...);
 }
 
 # Keep LauncherApplication members
