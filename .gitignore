@@ -37,3 +37,18 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Server databases — NEVER commit (Section 18 Rule 12+13)
+devices.db
+used_packages.db
+
+# Server keys — NEVER commit
+keys/
+*.pem
+public_key_for_kotlin.txt
+
+# Server runtime files
+server/__pycache__/
+server/*.log
+cloudflared.log
+nssm.log
