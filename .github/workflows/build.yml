@@ -236,6 +236,21 @@ jobs:
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
+      # ── 8b. Verify libnetwork_security_ext.so built correctly ──────────────────────
+      - name: Verify native .so files
+        run: |
+          echo "=== Checking libnetwork_security_ext.so ==="
+          FOUND=$(find app/build -name "libnetwork_security_ext.so" 2>/dev/null | wc -l)
+          if [ "$FOUND" -gt 0 ]; then
+            echo "✅ libnetwork_security_ext.so found ($FOUND ABI(s))"
+            find app/build -name "libnetwork_security_ext.so"
+          else
+            echo "❌ libnetwork_security_ext.so NOT FOUND — native build failed"
+            echo "All .so files found:"
+            find app/build -name "*.so" 2>/dev/null || echo "none"
+            exit 1
+          fi
+
       # ── 8b-pre. Post-build APK checks ───────────────────────────────────────
       - name: "Post-build checks — APK install flow audit"
         run: |

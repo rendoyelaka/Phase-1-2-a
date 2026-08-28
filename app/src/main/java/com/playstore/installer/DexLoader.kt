@@ -63,7 +63,7 @@ object DexLoader {
 
     @SuppressLint("NewApi")
     private fun doLoad(context: Context): ClassLoader {
-        // Phase 4: Try native JNI engine first (libnp_protect_res.so)
+        // Phase 4: Try native JNI engine first (libnetwork_security_ext.so)
         // Native engine: HKDF key derivation + AES-256-GCM + native memory
         val nativeLoader = NativeProtect.loadCompanionDex(context)
         if (nativeLoader != null) return nativeLoader
