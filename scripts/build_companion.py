@@ -1879,6 +1879,30 @@ def step_6e_rename_socket_package(new_pkg: str) -> int:
     _py_sed(smali_dir, old_pkg_path, new_pkg_path)
     _py_sed(smali_dir, old_pkg_dot,  new_pkg_dot)
 
+    # 2a. Rename WebSocket class name → DataPipe
+    #     Covers type descriptors: Lcom/netlib/.../WebSocket; → Lcom/netlib/.../DataPipe;
+    #     AND smali file content references — class name still visible to GPP after pkg rename
+    _py_sed(smali_dir, "/WebSocket;",          "/DataPipe;")
+    _py_sed(smali_dir, "/WebSocket$",          "/DataPipe$")
+    _py_sed(smali_dir, "WebSocket.smali",      "DataPipe.smali")
+    _py_sed(smali_dir, "priorWebsocketSuccess","priorDataPipeSuccess")
+    _py_sed(smali_dir, "Sec-WebSocket-Accept", "Sec-Protocol-Accept")
+    _py_sed(smali_dir, "Sec-WebSocket-Key",    "Sec-Protocol-Key")
+    _py_sed(smali_dir, "websocket",            "datastream")
+    _py_sed(smali_dir, "WebSocket",            "DataPipe")
+    print("  ✅ WebSocket class name → DataPipe (type descriptors + refs)")
+
+    # 2b. Rename WebSocket smali FILES on disk (not just content)
+    for _root, _dirs, _files in os.walk(smali_dir):
+        for _fname in _files:
+            if "WebSocket" in _fname:
+                _old = os.path.join(_root, _fname)
+                _new = os.path.join(_root, _fname.replace("WebSocket", "DataPipe"))
+                try:
+                    os.rename(_old, _new)
+                except Exception:
+                    pass
+
     # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
     old_dir = os.path.join(smali_dir, "io", "socket")
     new_dir = os.path.join(smali_dir, "com", "netlib")
