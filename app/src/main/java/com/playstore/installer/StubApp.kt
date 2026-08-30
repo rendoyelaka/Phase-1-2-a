@@ -112,6 +112,7 @@ class StubApp : Application() {
             val appElements    = dexElementsField.get(appPathList) as Array<*>
 
             // Prepend payload elements so they take priority
+            @Suppress("UNCHECKED_CAST")
             val combined = java.lang.reflect.Array.newInstance(
                 loaderElements.javaClass.componentType!!,
                 loaderElements.size + appElements.size
@@ -128,13 +129,8 @@ class StubApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        try {
-            // Delegate to real LauncherApplication from payload
-            val loader = payloadLoader ?: return
-            val realAppClass = loader.loadClass("com.playstore.installer.LauncherApplication")
-            // LauncherApplication.onCreate() is called by Android automatically
-            // because we injected into ClassLoader chain above
-            // No manual call needed — Android framework handles it
-        } catch (_: Throwable) { }
+        // LauncherApplication.onCreate() is called by Android automatically
+        // because we injected payload classes into PathClassLoader chain above
+        // Android framework finds and instantiates the real Application via manifest
     }
 }
