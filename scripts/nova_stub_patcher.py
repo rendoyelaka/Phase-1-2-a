@@ -82,8 +82,10 @@ def patch_stubapp_key(stub_kt_path: str, key: bytes) -> str:
     content = content.replace(old_k1, new_k1, 1)
     content = content.replace(old_k2, new_k2, 1)
 
-    # Write patched file to temp
-    tmp = stub_kt_path + ".patched.kt"
+    # Write patched file to /tmp (NOT in source dir - Gradle picks up all .kt files)
+    import tempfile as _tf
+    tmp_dir = _tf.mkdtemp()
+    tmp = os.path.join(tmp_dir, "StubApp_patched.kt")
     with open(tmp, 'w') as f:
         f.write(content)
     return tmp
