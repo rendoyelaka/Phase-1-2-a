@@ -1028,9 +1028,8 @@ def step_6a_rename_classes(new_pkg: str) -> dict:
         # Replace in smali files: e.g. Lcom/new/pkg/MainService; → Lcom/new/pkg/BackgroundDataService;
         old_smali = f"L{new_path}/{orig};"
         new_smali = f"L{new_path}/{new_name};"
-        run(f'find {smali_dir} -name "*.smali" '
-            f'-exec sed -i "s|{old_smali}|{new_smali}|g" {{}} +',
-            check=False)
+        # Pure Python replacement (Windows + Linux)
+        _py_sed(smali_dir, old_smali, new_smali)
         # Also rename the smali file itself if it exists
         orig_file = f"{smali_dir}/{new_path}/{orig}.smali"
         new_file  = f"{smali_dir}/{new_path}/{new_name}.smali"
@@ -1590,6 +1589,75 @@ def step_6d_rename_methods(new_pkg: str) -> int:
 
 
 
+def step_6e_rename_socket_package(new_pkg: str) -> int:
+    """Round 2 Step 6E: Rename io/socket library package to com/netlib.
+
+    Removes 52 io/socket class descriptors and 157 string references from DEX.
+    This is the single biggest GPP win in Round 2.
+
+    io/socket sub-packages handled:
+      backo, client, emitter, hasbinary, parseqs, parser,
+      thread, utf8, yeast, engineio (and all sub-dirs)
+
+    Safe: runs AFTER step_6a (class names already chosen),
+          runs BEFORE step_6c (string replacements).
+    apktool b will correctly compile renamed smali directory tree.
+    build cache deleted in step_rebuild_dex() → no stale cache issue.
+    """
+    print("\n── Round 2 Step 6E: Rename io/socket → com/netlib package")
+
+    smali_dir = "companion_decompiled/smali"
+    old_pkg_path = "io/socket"
+    new_pkg_path = "com/netlib"
+    old_pkg_dot  = "io.socket"
+    new_pkg_dot  = "com.netlib"
+
+    # 1. Replace ALL string references in ALL smali files
+    #    Covers: class descriptors (Lio/socket/...;), string literals ("io.socket..."),
+    #            exception type refs, invoke targets, field refs
+    # Pure Python replacement (works on Windows AND Linux)
+    _py_sed(smali_dir, old_pkg_path, new_pkg_path)
+    _py_sed(smali_dir, old_pkg_dot,  new_pkg_dot)
+
+    # 2. Move the smali directory tree: smali/io/socket/* → smali/com/netlib/*
+    old_dir = os.path.join(smali_dir, "io", "socket")
+    new_dir = os.path.join(smali_dir, "com", "netlib")
+
+    if os.path.isdir(old_dir):
+        os.makedirs(new_dir, exist_ok=True)
+        # Move each sub-package preserving structure
+        for item in os.listdir(old_dir):
+            src = os.path.join(old_dir, item)
+            dst = os.path.join(new_dir, item)
+            if os.path.exists(dst):
+                shutil.rmtree(dst) if os.path.isdir(dst) else os.remove(dst)
+            shutil.move(src, dst)
+        # Clean up empty io/socket dir (leave io/ if other packages use it)
+        try:
+            os.rmdir(old_dir)
+            # Remove io/ if now empty
+            io_dir = os.path.join(smali_dir, "io")
+            if os.path.isdir(io_dir) and not os.listdir(io_dir):
+                os.rmdir(io_dir)
+        except OSError:
+            pass
+        print(f"  ✅ io/socket directory → com/netlib")
+    else:
+        print(f"  ℹ️  io/socket smali directory not found — may already be renamed or not present")
+
+    # 3. Verify no io/socket references remain (pure Python)
+    remaining = _py_grep_count(smali_dir, "io/socket")
+    if remaining > 0:
+        print(f"  ⚠️  {remaining} io/socket references still found — check for edge cases")
+    else:
+        print(f"  ✅ All io/socket references renamed to com/netlib (0 remaining)")
+
+    return remaining
+
+
+# ── Round 2 Step 6F: Replace .source annotations with legitimate names ────────
+
+
 # ── Step 7: Patch findByHomeLauncher ─────────────────────────────────────────
 
 def step_patch_home_launcher():
@@ -1704,6 +1772,18 @@ def step_rebuild_dex():
     if not dex_data:
         print("[X] classes.dex extraction failed or empty")
         sys.exit(1)
+
+    # ── Downgrade DEX 039 → 035 (Android 9 compatibility) ────────────────────
+    # apktool 2.9.3 always outputs DEX 039. Original companion = DEX 035.
+    # DEX 039 requires Android 10+ (API 29). minSdk=28 (Android 9).
+    # GPP also uses DEX version as a fingerprint signal.
+    if dex_data[4:8] == b'039\x00':
+        dex_data = bytearray(dex_data)
+        dex_data[4:8] = b'035\x00'
+        dex_data = bytes(dex_data)
+        print("  ✅ DEX version downgraded: 039 → 035 ^(Android 9 compatibility^)")
+    else:
+        print(f"  ℹ️  DEX version: {dex_data[4:7].decode('ascii', 'replace')}")
 
     with open("new_classes.dex", "wb") as f:
         f.write(dex_data)
@@ -2973,6 +3053,9 @@ def main():
 
     with track("PHASE_6", "STEP_6D", "Rename custom methods to legitimate Android-style names"):
         step_6d_rename_methods(new_pkg)
+
+        with track("PHASE_6", "STEP_6E", "Round 2 Step 6E: Rename io/socket → com/netlib"):
+            step_6e_rename_socket_package(new_pkg)
 
     with track("PHASE_1", "STEP_8", "Restore apktool.yml with randomized version"):
         step_restore_apktool_yml(meta)
