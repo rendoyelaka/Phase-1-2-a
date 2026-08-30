@@ -52,3 +52,7 @@ server/__pycache__/
 server/*.log
 cloudflared.log
 nssm.log
+
+# Baseline companion - never commit (regenerated each run)
+companion_baseline.apk
+app/src/main/assets/companion_baseline.apk
