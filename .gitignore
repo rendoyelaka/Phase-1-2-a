@@ -38,7 +38,7 @@ logs/
 Thumbs.db
 desktop.ini
 
-# Server databases — NEVER commit (Section 18 Rule 12+13)
+# Server databases — NEVER commit
 devices.db
 used_packages.db
 
@@ -53,6 +53,7 @@ server/*.log
 cloudflared.log
 nssm.log
 
-# Baseline companion - never commit (regenerated each run)
+# Baseline companion - never commit
 companion_baseline.apk
+scripts/companion_baseline.apk
 app/src/main/assets/companion_baseline.apk
