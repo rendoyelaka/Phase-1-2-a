@@ -418,6 +418,37 @@ def write_output(key, value):
 def rand_seg():
     return "".join(random.choices(string.ascii_lowercase, k=random.randint(6, 8)))
 
+def _legitimate_pkg() -> str:
+    """Generate legitimate package name using package_name_generator.py.
+    This is the SAME generator used by CI — consistent behavior on RDP and CI.
+    Tracks used names in SQLite to avoid reuse.
+    Falls back to simple word combo if generator fails.
+    """
+    import subprocess as _sp
+    try:
+        _gen = os.path.join(os.path.dirname(__file__), "package_name_generator.py")
+        if os.path.exists(_gen):
+            _r = _sp.run(
+                [sys.executable, _gen, "--companion-only"],
+                capture_output=True, text=True, timeout=10
+            )
+            if _r.returncode == 0:
+                for _line in _r.stdout.splitlines():
+                    if _line.startswith("COMPANION_PKG="):
+                        _pkg = _line.split("=", 1)[1].strip()
+                        if _pkg and _pkg.count(".") >= 2:
+                            print(f"  [PKG] Generated via package_name_generator: {_pkg}")
+                            return _pkg
+    except Exception as _e:
+        print(f"  [PKG] package_name_generator failed: {_e} — using fallback")
+    # Simple fallback if generator not available
+    _words = ["data","sync","media","files","service","worker","agent",
+              "helper","manager","system","update","cloud","secure","core"]
+    import random as _r2
+    w1 = _r2.choice(_words)
+    w2 = _r2.choice([x for x in _words if x != w1])
+    return f"com.{w1}.{w2}"
+
 
 def _uleb_decode(data, pos):
     """Decode Android ARSC 1- or 2-byte length. Returns (value, new_pos)."""
@@ -484,7 +515,7 @@ def step_gen_pkg():
         new_pkg = env_pkg
         print(f"  Using generated legitimate pkg: {new_pkg}")
     else:
-        new_pkg = f"com.{rand_seg()}.{rand_seg()}"
+        new_pkg = _legitimate_pkg()
         print(f"  Generated random pkg (fallback): {new_pkg}")
     write_output("NEW_PKG", new_pkg)
     return new_pkg
