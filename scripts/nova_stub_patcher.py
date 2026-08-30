@@ -205,47 +205,9 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
     return out_path
 
 
-def resign_apk(apk_path: str, android_sdk: str) -> str:
-    """Re-sign APK using debug keystore."""
-    build_tools = os.path.join(android_sdk, "build-tools")
-    versions    = sorted(os.listdir(build_tools))
-    apksigner   = os.path.join(build_tools, versions[-1], "apksigner")
-
-    # Generate fresh keystore
-    ks_path = apk_path + ".ks"
-    subprocess.run([
-        "keytool", "-genkeypair", "-v",
-        "-keystore", ks_path,
-        "-alias", "nova_stub",
-        "-keyalg", "RSA", "-keysize", "2048",
-        "-validity", "365",
-        "-storepass", "nova1234",
-        "-keypass", "nova1234",
-        "-dname", "CN=Nova,OU=Dev,O=Nova,L=IN,ST=IN,C=IN",
-        "-noprompt"
-    ], check=True, capture_output=True)
-
-    # Zipalign first
-    aligned = apk_path + ".aligned.apk"
-    zipalign = os.path.join(build_tools, versions[-1], "zipalign")
-    subprocess.run([zipalign, "-f", "4", apk_path, aligned],
-                   check=True, capture_output=True)
-
-    # Sign
-    signed = apk_path.replace(".apk", "_stub.apk")
-    subprocess.run([
-        apksigner, "sign",
-        "--ks", ks_path,
-        "--ks-pass", "pass:nova1234",
-        "--key-pass", "pass:nova1234",
-        "--out", signed,
-        aligned
-    ], check=True, capture_output=True)
-
-    os.remove(ks_path)
-    os.remove(aligned)
-    print(f"  Signed: {signed}")
-    return signed
+# NOTE: Signing is handled by phase2_resign.py in build.yml
+# nova_stub_patcher.py does NOT sign — it only patches the APK content
+# phase2_resign.py uses the per-build keystore from KeystoreGeneratorPlugin
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -316,12 +278,11 @@ def main():
     print("\n[6] Patching APK...")
     patched_apk = patch_apk(args.apk, stub_dex, payload_bytes)
 
-    # Step 7: Re-sign
-    print("\n[7] Re-signing APK...")
-    # Note: In CI, the main signing happens in phase2_resign.py
-    # We just replace the APK file with the patched version
+    # Step 7: Replace original APK with patched version
+    # Signing is handled by phase2_resign.py — do NOT sign here
+    print("\n[7] Replacing original APK with stub version...")
     shutil.move(patched_apk, args.apk)
-    print(f"  Replaced original APK with stub version")
+    print(f"  ✅ Original APK replaced — phase2_resign.py will handle signing")
 
     print("\n" + "="*60)
     print("✅ Nova Stub DEX Patcher Complete")
