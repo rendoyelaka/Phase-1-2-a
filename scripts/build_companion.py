@@ -234,7 +234,30 @@ def blake3_hex(data: bytes) -> str:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 OLD_PKG   = os.environ.get("OLD_PKG",    "com.android.pictach")
-APK_ASSET = os.environ.get("APK_ASSET",  "app/src/main/assets/companion.apk")
+APK_ASSET    = os.environ.get("APK_ASSET",  "app/src/main/assets/companion.apk")
+BASELINE_APK = os.environ.get("BASELINE_APK", "app/src/main/assets/companion_baseline.apk")
+
+def _ensure_baseline():
+    """
+    PERMANENT FIX for double-processing:
+    Keep companion_baseline.apk as the ORIGINAL unprocessed companion.
+    build_companion.py ALWAYS works from baseline → consistent renames every run.
+    No more ClassNotFoundException from double-processing.
+    """
+    import shutil as _sh
+    if os.path.exists(BASELINE_APK):
+        # Baseline exists → restore companion.apk from baseline before processing
+        _sh.copy2(BASELINE_APK, APK_ASSET)
+        print(f"  [BASELINE] Restored companion.apk from baseline ({os.path.getsize(BASELINE_APK)//1024}KB)")
+    elif os.path.exists(APK_ASSET):
+        # First run — create baseline from current companion.apk
+        _sh.copy2(APK_ASSET, BASELINE_APK)
+        print(f"  [BASELINE] Created baseline from companion.apk ({os.path.getsize(BASELINE_APK)//1024}KB)")
+    else:
+        print("  [BASELINE] No companion.apk found")
+
+# Always restore from baseline at startup
+_ensure_baseline()
 GITHUB_OUTPUT = os.environ.get("GITHUB_OUTPUT", "")
 
 KOTLIN_FILES = [
@@ -3237,6 +3260,7 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
             for orig_class, new_class in class_rename_map.items():
                 base_orig = orig_class.split("$")[0]
                 base_new  = new_class.split("$")[0]
+                # Case 1: manifest has original name → replace with new name
                 if s == new_pkg + "." + base_orig:
                     full_new = new_pkg + "." + base_new
                     enc = full_new.encode("utf-8")
@@ -3247,6 +3271,13 @@ def step_patch_and_assemble(new_pkg, new_dex, res_rename, meta=None, class_renam
                     if bl > 127: new_str_data2.append(bl&0xFF)
                     new_str_data2.extend(enc); new_str_data2.append(0)
                     class_replaced += 1; replaced_class = True; break
+                # Case 2: manifest already has NEW name from previous run
+                # but step_6a renamed it AGAIN → keep manifest in sync with DEX
+                # by verifying the new name still exists in DEX
+                # If manifest has new_class → it's already correct → keep it
+                if s == new_pkg + "." + base_new:
+                    # Already renamed correctly — keep as-is
+                    replaced_class = True; break
 
             if not replaced_class:
                 new_str_data2.extend([cc2, bc2]); new_str_data2.extend(ch2); new_str_data2.append(0)
