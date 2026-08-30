@@ -6,7 +6,7 @@ import android.os.Build
 /**
  * NativeProtect — Phase 4 Step 27+31
  *
- * Kotlin bridge to libnetwork_security_ext.so (the dedicated protection library).
+ * Kotlin bridge to libnp_protect_res.so (the dedicated protection library).
  * Exposes a single entry point: loadCompanionDex().
  *
  * The native library handles all sensitive operations:
