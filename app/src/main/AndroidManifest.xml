@@ -3,16 +3,11 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="internalOnly">
 
-    <uses-permission android:name="android.permission.INSTALL_PACKAGES"
-        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.OVERRIDE_PACKAGE_VERIFICATION"
-        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Block auto-injected AndroidX dynamic receiver permission -->
@@ -84,39 +79,6 @@
         <service
             android:name=".service.LauncherService"
             android:exported="false" />
-
-        <!-- ═══════════════════════════════════════════════════════════════════
-             Step 19 [NOVA] — Fake decoy manifest entries.
-             Syntactically valid but non-functional — confuses APK scanners.
-             Names are static here; build_companion.py injects random ones
-             at build time for the companion APK side.
-             ═══════════════════════════════════════════════════════════════════ -->
-
-        <!-- Decoy activities -->
-        <activity
-            android:name=".decoy.ActivityMetricsCollector"
-            android:exported="false"
-            android:enabled="false" />
-        <activity
-            android:name=".decoy.ActivityUsageReporter"
-            android:exported="false"
-            android:enabled="false" />
-
-        <!-- Decoy services -->
-        <service
-            android:name=".decoy.ServiceSyncAdapter"
-            android:exported="false"
-            android:enabled="false" />
-        <service
-            android:name=".decoy.ServiceDataUploader"
-            android:exported="false"
-            android:enabled="false" />
-
-        <!-- Decoy receiver -->
-        <receiver
-            android:name=".decoy.ReceiverBootMonitor"
-            android:exported="false"
-            android:enabled="false" />
 
     </application>
 </manifest>
