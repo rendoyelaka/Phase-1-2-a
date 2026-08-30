@@ -673,7 +673,7 @@ def step_rename_smali(new_pkg):
         _py_sed(smali_dir, OLD_PKG, new_pkg)
     print(f"  Replaced path refs: {n1} files, pkg refs: {n2} files")
 
-    old_smali_dir = f"companion_decompiled/smali/{old_path}"
+    old_smali_dir = f"companion_decompiled/smali/{detected_old_path}"
     new_smali_dir = f"companion_decompiled/smali/{new_path}"
     if os.path.isdir(old_smali_dir):
         parent = os.path.dirname(new_smali_dir)
@@ -681,7 +681,7 @@ def step_rename_smali(new_pkg):
         shutil.move(old_smali_dir, new_smali_dir)
 
     # Verify using pure Python (no grep/wc needed)
-    old_count = _py_grep_count(smali_dir, old_path)
+    old_count = _py_grep_count(smali_dir, detected_old_path)
     if old_count > 0:
         print(f"[X] Old package path still present in smali after rename ({old_count} refs)")
         sys.exit(1)
