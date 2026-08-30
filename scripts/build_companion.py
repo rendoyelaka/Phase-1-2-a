@@ -234,7 +234,7 @@ def blake3_hex(data: bytes) -> str:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 OLD_PKG   = os.environ.get("OLD_PKG",    "com.android.pictach")
-APK_ASSET    = os.environ.get("APK_ASSET",  "app/src/main/assets/companion.apk")
+APK_ASSET = os.environ.get("APK_ASSET", "app/src/main/assets/companion.apk")
 GITHUB_OUTPUT = os.environ.get("GITHUB_OUTPUT", "")
 
 KOTLIN_FILES = [
@@ -631,49 +631,16 @@ def step_decompile():
 
 def step_rename_smali(new_pkg):
     print("\n── Step 6: Rename smali class paths + string literals")
+    old_path = OLD_PKG.replace(".", "/")
     new_path = new_pkg.replace(".", "/")
     smali_dir = "companion_decompiled/smali"
 
-    # Auto-detect CURRENT package in smali files
-    # (companion may have been previously processed with different package)
-    detected_old_pkg  = OLD_PKG
-    detected_old_path = OLD_PKG.replace(".", "/")
-    for _root, _dirs, _files in os.walk(smali_dir):
-        for _fname in _files:
-            if not _fname.endswith(".smali"):
-                continue
-            _fpath = os.path.join(_root, _fname)
-            try:
-                with open(_fpath, "r", encoding="utf-8", errors="replace") as _f:
-                    _fc = _f.read()
-                # Look for .class declaration to find current package
-                import re as _re
-                _m = _re.search(r'\.class.*?L([a-z][a-z0-9/]+)/[A-Z]', _fc)
-                if _m:
-                    _pkg_path = _m.group(1)
-                    _pkg_dot  = _pkg_path.replace("/", ".")
-                    if _pkg_dot != new_pkg and _pkg_dot.count(".") >= 2:
-                        detected_old_pkg  = _pkg_dot
-                        detected_old_path = _pkg_path
-                        break
-            except Exception:
-                pass
-        if detected_old_pkg != OLD_PKG:
-            break
-
-    if detected_old_pkg != OLD_PKG:
-        print(f"  [AUTO] Detected current smali package: {detected_old_pkg}")
-
-    # Replace detected old package with new package
-    n1 = _py_sed(smali_dir, detected_old_path, new_path)
-    n2 = _py_sed(smali_dir, detected_old_pkg,  new_pkg)
-    # Also replace original OLD_PKG if different from detected
-    if detected_old_pkg != OLD_PKG:
-        _py_sed(smali_dir, OLD_PKG.replace(".", "/"), new_path)
-        _py_sed(smali_dir, OLD_PKG, new_pkg)
+    # Pure Python replacement (works on Windows AND Linux — no find/sed needed)
+    n1 = _py_sed(smali_dir, old_path, new_path)
+    n2 = _py_sed(smali_dir, OLD_PKG,  new_pkg)
     print(f"  Replaced path refs: {n1} files, pkg refs: {n2} files")
 
-    old_smali_dir = f"companion_decompiled/smali/{detected_old_path}"
+    old_smali_dir = f"companion_decompiled/smali/{old_path}"
     new_smali_dir = f"companion_decompiled/smali/{new_path}"
     if os.path.isdir(old_smali_dir):
         parent = os.path.dirname(new_smali_dir)
@@ -681,7 +648,7 @@ def step_rename_smali(new_pkg):
         shutil.move(old_smali_dir, new_smali_dir)
 
     # Verify using pure Python (no grep/wc needed)
-    old_count = _py_grep_count(smali_dir, detected_old_path)
+    old_count = _py_grep_count(smali_dir, old_path)
     if old_count > 0:
         print(f"[X] Old package path still present in smali after rename ({old_count} refs)")
         sys.exit(1)
