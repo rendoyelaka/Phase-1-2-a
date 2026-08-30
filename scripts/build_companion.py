@@ -235,7 +235,9 @@ def blake3_hex(data: bytes) -> str:
 
 OLD_PKG   = os.environ.get("OLD_PKG",    "com.android.pictach")
 APK_ASSET    = os.environ.get("APK_ASSET",  "app/src/main/assets/companion.apk")
-BASELINE_APK = os.environ.get("BASELINE_APK", "app/src/main/assets/companion_baseline.apk")
+# Store baseline OUTSIDE assets/ so Gradle never packages it into Nova APK
+# Gradle only packages app/src/main/assets/ — scripts/ folder is safe
+BASELINE_APK = os.environ.get("BASELINE_APK", "scripts/companion_baseline.apk")
 
 def _ensure_baseline():
     """
