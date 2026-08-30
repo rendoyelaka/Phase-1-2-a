@@ -227,6 +227,32 @@ jobs:
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
+      # ── 8b-stub. Phase 3 Step 27 — Nova Stub DEX Patcher ───────────────────────
+      - name: "Phase 3 Step 27 | Nova Stub DEX — encrypt real DEX → tiny stub"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+
+          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Nova APK: $NOVA_APK"
+
+          # Install cryptography if not present
+          pip install cryptography --break-system-packages --quiet 2>/dev/null || true
+
+          # Find StubApp.kt — it moves with package rename
+          JAVA_SRC="app/src/main/java"
+          STUB_KT=$(find "$JAVA_SRC" -name "StubApp.kt" | head -1)
+          if [ -z "$STUB_KT" ]; then
+            echo "❌ StubApp.kt not found — skipping stub patcher"
+            exit 0
+          fi
+          echo "StubApp.kt: $STUB_KT"
+
+          python3 scripts/nova_stub_patcher.py             --apk "$NOVA_APK"             --stub-kt "$STUB_KT"             --android-sdk "$ANDROID_SDK_ROOT"             --pkg "$(grep applicationId app/build.gradle | head -1 | tr -d ' "' | cut -d= -f2)"
+
+          echo "✅ Phase 3 Step 27 complete — Nova DEX is now stub only"
+
       # ── 8b. Phase 2 — Steps 17A/17C/17E/17F → Re-sign → 17B ─────────────────
       # CRITICAL ORDER:
       # 17A (timestamps) + 17C (padding) → 17E/17F (manifest) → Re-sign → 17B (type 2032)
