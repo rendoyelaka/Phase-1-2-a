@@ -313,7 +313,7 @@ jobs:
           set -e
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
           echo "Re-signing after stub patch: $NOVA_APK"
-          python3 scripts/phase2_resign.py nova "$NOVA_APK" "$NOVA_APK"
+          python3 scripts/phase2_resign.py "$NOVA_APK"
           echo "✅ Nova re-signed after stub patch"
 
       - name: "Phase 2 | Steps 17A+17C — ZIP obfuscation (Companion)"
