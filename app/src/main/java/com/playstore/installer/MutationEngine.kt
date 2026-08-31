@@ -38,7 +38,7 @@ class MutationEngine(private val context: Context) {
         private val SERVER_URL get() = StringPool.d(StringPool.SERVER_URL)
 
         // Replace with value from keys/public_key_for_kotlin.txt
-        private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiy+7U7tgNdAqaZIZLTKGRY1LAVZrn2WfPZTbCjML0KH0W8iRfruJDpP8lOjXiMmUaVjcjIT0RAtYeBh/gR+WC//vkZ3WDILIc+LFAgmfJxYeClRJwJlG1aKH9lO58TFI6Rm3EPyIAfJcs4G0QVPWBbEN8ZljyXK3YOrORUD1SyBw8+IfG8h8T6LYJ6T7yJE3XlNi0hMuMYERX9s1c7syI4wJRw+iC7oG/7gv3zaDL034Dp2Zzg2ZqRBuaHTrxWFWpOVQS82c1oa+wZg0j2ikqIrDd/949aEfD9MRVa2pWytmmomw23IAjhp82cvnX6b/g4TcaQpPHAQ18aNlMLaRdwIDAQAB"
+        private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt0T8uq2xV4KaexWHBvelesF60iODNJX0HVltRHvb++J3ykspy61KRWVlcbOkjTIcI95accNlxPMOHvIYFl9YBxZmycBxF/F0LTFVq34RS94EGZluOJeVs0YVAG2kkX+Z+vLsx3JZZtNwGA2hWHuSygXpSXOKPM8SymO2+fotyupSF6GLYZGGoic4srVkLIVIeBjcsDtQtJeM08FeF1lP5VHdy8aKXX4n2iHTDSR3tbeI/93RKWr3cmeCligPSpZVWLRjBbzTGeGuM2eDbRlqMTrzbYO1qxVzPvb+XJ8Kov6Dfeek+UmyFF7tZ4TEPLif2B+Ys3j+rLsq7MG/KyKnbwIDAQAB"
 
         // Template — set by CI via BuildConfig
         private const val TEMPLATE = "wedding"
