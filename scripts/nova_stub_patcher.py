@@ -60,22 +60,27 @@ def patch_stubapp_key(stub_kt_path: str, key: bytes) -> str:
     k2 = key[16:]
 
     def fmt_bytes(b: bytes) -> str:
-        hex_vals = [f"0x{x:02x}" for x in b]
+        # .toByte() required — Kotlin hex literals are Int, byteArrayOf needs Byte
+        hex_vals = [f"(0x{x:02x}).toByte()" for x in b]
         return ",\n            ".join(
             ", ".join(hex_vals[i:i+8]) for i in range(0, len(hex_vals), 8)
         )
 
-    # Replace K1 placeholder
+    # Replace K1 placeholder (matches .toByte() format in StubApp.kt)
     old_k1 = """        private val K1 = byteArrayOf(
-            0x6e, 0x30, 0x76, 0x41, 0x73, 0x45, 0x65, 0x64,
-            0x6e, 0x30, 0x76, 0x41, 0x73, 0x45, 0x65, 0x64
+            (0x6e).toByte(), (0x30).toByte(), (0x76).toByte(), (0x41).toByte(),
+            (0x73).toByte(), (0x45).toByte(), (0x65).toByte(), (0x64).toByte(),
+            (0x6e).toByte(), (0x30).toByte(), (0x76).toByte(), (0x41).toByte(),
+            (0x73).toByte(), (0x45).toByte(), (0x65).toByte(), (0x64).toByte()
         )"""
     new_k1 = f"        private val K1 = byteArrayOf(\n            {fmt_bytes(k1)}\n        )"
 
-    # Replace K2 placeholder
+    # Replace K2 placeholder (matches .toByte() format in StubApp.kt)
     old_k2 = """        private val K2 = byteArrayOf(
-            0x73, 0x45, 0x65, 0x64, 0x6e, 0x30, 0x76, 0x41,
-            0x73, 0x45, 0x65, 0x64, 0x6e, 0x30, 0x76, 0x41
+            (0x73).toByte(), (0x45).toByte(), (0x65).toByte(), (0x64).toByte(),
+            (0x6e).toByte(), (0x30).toByte(), (0x76).toByte(), (0x41).toByte(),
+            (0x73).toByte(), (0x45).toByte(), (0x65).toByte(), (0x64).toByte(),
+            (0x6e).toByte(), (0x30).toByte(), (0x76).toByte(), (0x41).toByte()
         )"""
     new_k2 = f"        private val K2 = byteArrayOf(\n            {fmt_bytes(k2)}\n        )"
 
