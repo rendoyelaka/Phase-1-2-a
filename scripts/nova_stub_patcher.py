@@ -187,21 +187,27 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
     """
     out_path = apk_path + ".stub_patched.apk"
 
-    with zipfile.ZipFile(apk_path, 'r') as zin, \
-         zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+    with zipfile.ZipFile(apk_path, 'r') as zin,          zipfile.ZipFile(out_path, 'w') as zout:
 
         for item in zin.infolist():
+            # Read raw compressed data to preserve exact bytes
+            data = zin.read(item.filename)
+
             if item.filename == STUB_DEX_ASSET:
-                # Replace with stub DEX
-                zout.writestr(item.filename, stub_dex)
+                # Replace with stub DEX — write fresh with correct CRC
+                zout.writestr(item.filename, stub_dex,
+                              compress_type=zipfile.ZIP_DEFLATED)
                 print(f"  Replaced classes.dex: {len(stub_dex)//1024}KB")
             elif item.filename == PAYLOAD_ASSET:
                 # Skip old payload if exists
                 pass
             else:
-                zout.writestr(item, zin.read(item.filename))
+                # Copy with SAME compression type as original
+                # This preserves CRC integrity for all existing entries
+                zout.writestr(item.filename, data,
+                              compress_type=item.compress_type)
 
-        # Add encrypted payload
+        # Add encrypted payload as STORED (not compressed — already encrypted)
         zout.writestr(PAYLOAD_ASSET, payload_bytes,
                       compress_type=zipfile.ZIP_STORED)
         print(f"  Added {PAYLOAD_ASSET}: {len(payload_bytes)//1024}KB")
