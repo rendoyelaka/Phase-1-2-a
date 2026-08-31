@@ -182,104 +182,37 @@ def compile_stub_dex(stub_kt_path: str, android_sdk: str, pkg_name: str) -> byte
 def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
     """
     Replace classes.dex with stub DEX and add nova_payload.bin.
-    Uses the same raw ZIP building approach as manifest_zip_patcher.py
-    to preserve exact CRC values for all unchanged entries.
+    Produces a valid ZIP with correct CRCs using Python zipfile.
     """
-    import zlib as _zlib
-
     out_path = apk_path + ".stub_patched.apk"
 
-    with open(apk_path, 'rb') as f:
-        raw_apk = f.read()
-
-    out_entries = []  # list of (ZipInfo, data, is_raw)
-
     with zipfile.ZipFile(apk_path, 'r') as zin:
-        for item in zin.infolist():
-            if item.filename == STUB_DEX_ASSET:
-                # New stub DEX — fresh data
-                out_entries.append((item, stub_dex, False))
-                item.compress_type = zipfile.ZIP_DEFLATED
-                print(f"  Replaced classes.dex: {len(stub_dex)//1024}KB")
+        with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == STUB_DEX_ASSET:
+                    zout.writestr(item.filename, stub_dex,
+                                  compress_type=zipfile.ZIP_DEFLATED)
+                    print(f"  Replaced classes.dex: {len(stub_dex)//1024}KB")
+                elif item.filename == PAYLOAD_ASSET:
+                    pass
+                else:
+                    # Decompress fully then rewrite — guarantees correct CRC
+                    data = zin.read(item.filename)
+                    zout.writestr(item.filename, data,
+                                  compress_type=item.compress_type)
 
-            elif item.filename == PAYLOAD_ASSET:
-                pass  # Skip old payload
+            # Add encrypted payload
+            zout.writestr(PAYLOAD_ASSET, payload_bytes,
+                          compress_type=zipfile.ZIP_STORED)
+            print(f"  Added {PAYLOAD_ASSET}: {len(payload_bytes)//1024}KB")
 
-            else:
-                # Copy RAW compressed bytes — preserves exact CRC
-                fname_len = struct.unpack_from('<H', raw_apk, item.header_offset+26)[0]
-                extra_len = struct.unpack_from('<H', raw_apk, item.header_offset+28)[0]
-                data_off  = item.header_offset + 30 + fname_len + extra_len
-                raw_data  = raw_apk[data_off : data_off + item.compress_size]
-                out_entries.append((item, raw_data, True))
-
-    # Add nova_payload.bin
-    payload_info = zipfile.ZipInfo(PAYLOAD_ASSET)
-    payload_info.compress_type = zipfile.ZIP_STORED
-    out_entries.append((payload_info, payload_bytes, False))
-    print(f"  Added {PAYLOAD_ASSET}: {len(payload_bytes)//1024}KB")
-
-    # Write output ZIP using raw bytes — same as manifest_zip_patcher.py
-    with open(out_path, 'wb') as out:
-        cd_entries = []
-        for item, data, is_raw in out_entries:
-            fname   = item.filename.encode('utf-8')
-            offset  = out.tell()
-            ctype   = item.compress_type
-            dt      = item.date_time
-            dosdate = ((dt[0]-1980)<<9)|(dt[1]<<5)|dt[2]
-            dostime = (dt[3]<<11)|(dt[4]<<5)|(dt[5]//2)
-
-            if is_raw:
-                out_data = data
-                crc = item.CRC
-                csz = item.compress_size
-                usz = item.file_size
-            elif ctype == zipfile.ZIP_DEFLATED:
-                out_data = _zlib.compress(data, 6)[2:-4]
-                crc = zipfile.crc32(data) & 0xFFFFFFFF
-                csz = len(out_data)
-                usz = len(data)
-            else:
-                out_data = data
-                crc = zipfile.crc32(data) & 0xFFFFFFFF
-                csz = len(data)
-                usz = len(data)
-
-            lfh = struct.pack('<4sHHHHHIIIHH',
-                b'PK\x03\x04',
-                getattr(item, 'extract_version', 20),
-                getattr(item, 'flag_bits', 0) & ~0x8,
-                ctype, dostime, dosdate,
-                crc, csz, usz, len(fname), 0)
-            out.write(lfh + fname + out_data)
-
-            ea = getattr(item, 'external_attr', 0)
-            ia = getattr(item, 'internal_attr', 0)
-            cs = getattr(item, 'create_system', 0)
-            ev = getattr(item, 'extract_version', 20)
-            fl = getattr(item, 'flag_bits', 0) & ~0x8
-            cd_entries.append((fname, offset, ctype, dostime, dosdate,
-                               crc, csz, usz, cs, ev, fl, ia, ea))
-
-        cd_start = out.tell()
-        for (fname, offset, ctype, dostime, dosdate,
-             crc, csz, usz, cs, ev, flags, ia, ea) in cd_entries:
-            cdh = struct.pack('<4sHHHHHHIIIHHHHHII',
-                b'PK\x01\x02',
-                (cs<<8)|20, ev, flags,
-                ctype, dostime, dosdate,
-                crc, csz, usz,
-                len(fname), 0, 0, 0, ia, ea, offset)
-            out.write(cdh + fname)
-
-        cd_end  = out.tell()
-        cd_size = cd_end - cd_start
-        eocd = struct.pack('<4sHHHHIIH',
-            b'PK\x05\x06', 0, 0,
-            len(cd_entries), len(cd_entries),
-            cd_size, cd_start, 0)
-        out.write(eocd)
+    # Verify the output ZIP is readable
+    try:
+        with zipfile.ZipFile(out_path, 'r') as z:
+            z.testzip()
+        print("  ZIP integrity: OK")
+    except Exception as e:
+        raise RuntimeError(f"Output ZIP invalid: {e}")
 
     return out_path
 
