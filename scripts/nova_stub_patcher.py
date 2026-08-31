@@ -98,55 +98,84 @@ def patch_stubapp_key(stub_kt_path: str, key: bytes) -> str:
 
 def compile_stub_dex(stub_kt_path: str, android_sdk: str, pkg_name: str) -> bytes:
     """
-    Compile StubApp.kt to DEX using kotlinc + d8.
-    kotlinc installed in CI via snap.
-    d8 always available in Android SDK build-tools.
+    Create minimal stub DEX containing ONLY StubApp class.
+    Uses d8 from Android SDK (always available - no installation needed).
+    Finds StubApp.class files from Gradle build intermediates.
+    NO kotlinc installation required.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Find d8 (always in Android SDK)
+        # Find d8 (always in Android SDK build-tools)
         build_tools = os.path.join(android_sdk, "build-tools")
         versions    = sorted(os.listdir(build_tools))
         d8_path     = os.path.join(build_tools, versions[-1], "d8")
+        print(f"  d8: {d8_path}")
 
         # Find android.jar
         platforms   = os.path.join(android_sdk, "platforms")
         platform    = sorted(os.listdir(platforms))[-1]
         android_jar = os.path.join(platforms, platform, "android.jar")
 
-        # Step A: kotlinc → jar
-        jar_path = os.path.join(tmpdir, "stub.jar")
-        result = subprocess.run(
-            ["kotlinc", stub_kt_path,
-             "-classpath", android_jar,
-             "-d", jar_path,
-             "-jvm-target", "1.8"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"kotlinc failed: {result.stderr[:400]}")
-        print(f"  kotlinc OK: {os.path.getsize(jar_path)//1024}KB jar")
+        # Find StubApp.class files in Gradle build intermediates
+        # Gradle compiles all Kotlin files including StubApp.kt
+        # The .class files are in build intermediates before DEX conversion
+        stub_classes = []
+        search_dirs = [
+            "app/build/tmp/kotlin-classes/release",
+            "app/build/tmp/kotlin-classes/releaseMinify",
+            "app/build/intermediates/javac/release/classes",
+            "app/build/intermediates/kotlinc/release/classes",
+        ]
 
-        # Step B: d8 → DEX
-        out_dir = os.path.join(tmpdir, "dex_out")
+        for search_dir in search_dirs:
+            if not os.path.isdir(search_dir):
+                continue
+            for root, dirs, files in os.walk(search_dir):
+                for f in files:
+                    if "StubApp" in f and f.endswith(".class"):
+                        stub_classes.append(os.path.join(root, f))
+                        print(f"  Found: {os.path.join(root, f)}")
+
+        if not stub_classes:
+            # R8/ProGuard minification renames classes - search more broadly
+            print("  StubApp.class not found in standard paths, searching all build dirs...")
+            for root, dirs, files in os.walk("app/build"):
+                for f in files:
+                    if "StubApp" in f and f.endswith(".class"):
+                        stub_classes.append(os.path.join(root, f))
+                        print(f"  Found: {os.path.join(root, f)}")
+
+        if not stub_classes:
+            raise RuntimeError(
+                "StubApp.class not found in build intermediates. "
+                "Note: R8 minification may have renamed/removed it. "
+                "Check if minifyEnabled=true is removing StubApp."
+            )
+
+        print(f"  Found {len(stub_classes)} StubApp class files")
+
+        # Compile stub .class files → stub DEX using d8
+        out_dir = os.path.join(tmpdir, "stub_dex_out")
         os.makedirs(out_dir)
-        result2 = subprocess.run(
-            [d8_path, jar_path,
-             "--output", out_dir,
-             "--lib", android_jar,
-             "--min-api", "26"],
-            capture_output=True, text=True
-        )
-        if result2.returncode != 0:
-            raise RuntimeError(f"d8 failed: {result2.stderr[:400]}")
+
+        cmd = [d8_path] + stub_classes + [
+            "--output", out_dir,
+            "--lib", android_jar,
+            "--min-api", "26",
+            "--no-desugaring",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"d8 failed: {result.stderr[:400]}")
 
         dex_file = os.path.join(out_dir, "classes.dex")
         if not os.path.exists(dex_file):
-            raise RuntimeError("Stub DEX not produced")
+            raise RuntimeError("Stub DEX not produced by d8")
 
-        with open(dex_file, 'rb') as f:
+        with open(dex_file, "rb") as f:
             stub_dex = f.read()
 
-        print(f"  Stub DEX: {len(stub_dex)//1024}KB")
+        print(f"  Stub DEX size: {len(stub_dex)//1024}KB (stub only)")
         return stub_dex
 
 
