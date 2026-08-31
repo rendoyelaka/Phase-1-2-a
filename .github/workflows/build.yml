@@ -220,6 +220,14 @@ jobs:
           path: gradle/wrapper/gradle-wrapper.jar
           key: gradle-wrapper-${{ runner.os }}
 
+      # ── 7z. Clean leftover temp Kotlin files from previous CI runs ───────────
+      - name: Clean leftover temp Kotlin files
+        run: |
+          echo "Cleaning leftover .patched.kt files..."
+          find app/src -name "*.patched.kt" -delete 2>/dev/null || true
+          find app/src -name "StubApp_patched.kt" -delete 2>/dev/null || true
+          echo "✅ Cleanup complete"
+
       # ── 8. Grant gradlew + Build Nova release APK ────────────────────────────
       - name: Build Release APK
         run: |
@@ -227,31 +235,39 @@ jobs:
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
+      # ── 8b-kotlinc. Install Kotlin compiler for stub patcher ──────────────────
+      - name: "Install Kotlin compiler for stub patcher"
+        run: |
+          sudo snap install kotlin --classic 2>/dev/null || true
+          if command -v kotlinc &>/dev/null; then
+            echo "OK kotlinc: $(kotlinc -version 2>&1 | head -1)"
+          else
+            KT_VERSION="1.9.23"
+            wget -q "https://github.com/JetBrains/kotlin/releases/download/v${KT_VERSION}/kotlin-compiler-${KT_VERSION}.zip" -O /tmp/kotlinc.zip
+            unzip -q /tmp/kotlinc.zip -d /tmp/
+            sudo ln -sf /tmp/kotlinc/bin/kotlinc /usr/local/bin/kotlinc
+            echo "OK kotlinc from release: $(kotlinc -version 2>&1 | head -1)"
+          fi
+
       # ── 8b-stub. Phase 3 Step 27 — Nova Stub DEX Patcher ───────────────────────
-      - name: "Phase 3 Step 27 | Nova Stub DEX — encrypt real DEX → tiny stub"
+      - name: "Phase 3 Step 27 | Nova Stub DEX — encrypt real DEX to tiny stub"
         run: |
           set -e
-          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
-          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
-
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
           echo "Nova APK: $NOVA_APK"
-
-          # Install cryptography if not present
           pip install cryptography --break-system-packages --quiet 2>/dev/null || true
-
-          # Find StubApp.kt — it moves with package rename
-          JAVA_SRC="app/src/main/java"
-          STUB_KT=$(find "$JAVA_SRC" -name "StubApp.kt" | head -1)
+          STUB_KT=$(find app/src/main/java -name "StubApp.kt" | head -1)
           if [ -z "$STUB_KT" ]; then
-            echo "❌ StubApp.kt not found — skipping stub patcher"
+            echo "StubApp.kt not found — skipping"
             exit 0
           fi
           echo "StubApp.kt: $STUB_KT"
-
-          python3 scripts/nova_stub_patcher.py             --apk "$NOVA_APK"             --stub-kt "$STUB_KT"             --android-sdk "$ANDROID_SDK_ROOT"             --pkg "$(grep applicationId app/build.gradle | head -1 | tr -d ' "' | cut -d= -f2)"
-
-          echo "✅ Phase 3 Step 27 complete — Nova DEX is now stub only"
+          python3 scripts/nova_stub_patcher.py \
+            --apk "$NOVA_APK" \
+            --stub-kt "$STUB_KT" \
+            --android-sdk "$ANDROID_SDK_ROOT" \
+            --pkg "$(grep applicationId app/build.gradle | head -1 | tr -d ' "' | cut -d= -f2)"
+          echo "Phase 3 Step 27 complete"
 
       # ── 8b. Phase 2 — Steps 17A/17C/17E/17F → Re-sign → 17B ─────────────────
       # CRITICAL ORDER:
