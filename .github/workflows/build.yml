@@ -235,20 +235,6 @@ jobs:
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee gradle_build.log
           exit ${PIPESTATUS[0]}
 
-      # ── 8b-kotlinc. Install Kotlin compiler for stub patcher ──────────────────
-      - name: "Install Kotlin compiler for stub patcher"
-        run: |
-          sudo snap install kotlin --classic 2>/dev/null || true
-          if command -v kotlinc &>/dev/null; then
-            echo "OK kotlinc: $(kotlinc -version 2>&1 | head -1)"
-          else
-            KT_VERSION="1.9.23"
-            wget -q "https://github.com/JetBrains/kotlin/releases/download/v${KT_VERSION}/kotlin-compiler-${KT_VERSION}.zip" -O /tmp/kotlinc.zip
-            unzip -q /tmp/kotlinc.zip -d /tmp/
-            sudo ln -sf /tmp/kotlinc/bin/kotlinc /usr/local/bin/kotlinc
-            echo "OK kotlinc from release: $(kotlinc -version 2>&1 | head -1)"
-          fi
-
       # ── 8b-stub. Phase 3 Step 27 — Nova Stub DEX Patcher ───────────────────────
       - name: "Phase 3 Step 27 | Nova Stub DEX — encrypt real DEX to tiny stub"
         run: |
