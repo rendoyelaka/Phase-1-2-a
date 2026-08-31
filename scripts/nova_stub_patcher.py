@@ -98,85 +98,55 @@ def patch_stubapp_key(stub_kt_path: str, key: bytes) -> str:
 
 def compile_stub_dex(stub_kt_path: str, android_sdk: str, pkg_name: str) -> bytes:
     """
-    Compile StubApp.kt to classes.dex using d8.
-    Returns raw DEX bytes.
+    Compile StubApp.kt to DEX using kotlinc + d8.
+    kotlinc installed in CI via snap.
+    d8 always available in Android SDK build-tools.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Find d8 tool
+        # Find d8 (always in Android SDK)
         build_tools = os.path.join(android_sdk, "build-tools")
         versions    = sorted(os.listdir(build_tools))
         d8_path     = os.path.join(build_tools, versions[-1], "d8")
-        if not os.path.exists(d8_path):
-            d8_path += ".bat"
-
-        # Find kotlinc
-        kotlinc = shutil.which("kotlinc")
-        if not kotlinc:
-            # Try common paths
-            for p in ["/usr/local/bin/kotlinc", "/usr/bin/kotlinc"]:
-                if os.path.exists(p):
-                    kotlinc = p
-                    break
-
-        if not kotlinc:
-            raise RuntimeError("kotlinc not found")
 
         # Find android.jar
-        platforms = os.path.join(android_sdk, "platforms")
-        platform  = sorted(os.listdir(platforms))[-1]
+        platforms   = os.path.join(android_sdk, "platforms")
+        platform    = sorted(os.listdir(platforms))[-1]
         android_jar = os.path.join(platforms, platform, "android.jar")
 
-        # Compile Kotlin → .class files
-        classes_dir = os.path.join(tmpdir, "classes")
-        os.makedirs(classes_dir)
-
-        result = subprocess.run([
-            kotlinc,
-            stub_kt_path,
-            "-classpath", android_jar,
-            "-d", classes_dir,
-            "-jvm-target", "1.8",
-        ], capture_output=True, text=True)
-
+        # Step A: kotlinc → jar
+        jar_path = os.path.join(tmpdir, "stub.jar")
+        result = subprocess.run(
+            ["kotlinc", stub_kt_path,
+             "-classpath", android_jar,
+             "-d", jar_path,
+             "-jvm-target", "1.8"],
+            capture_output=True, text=True
+        )
         if result.returncode != 0:
-            print(f"[WARN] kotlinc: {result.stderr[:500]}")
-            # Try with jar output instead
-            jar_path = os.path.join(tmpdir, "stub.jar")
-            result2 = subprocess.run([
-                kotlinc, stub_kt_path,
-                "-classpath", android_jar,
-                "-d", jar_path,
-                "-jvm-target", "1.8",
-            ], capture_output=True, text=True)
-            if result2.returncode != 0:
-                raise RuntimeError(f"kotlinc failed: {result2.stderr[:300]}")
-            # Convert jar to DEX
-            dex_path = os.path.join(tmpdir, "stub_dex")
-            os.makedirs(dex_path)
-            subprocess.run([d8_path, jar_path, "--output", dex_path,
-                           "--lib", android_jar], check=True)
-        else:
-            # Convert .class files to DEX
-            class_files = []
-            for root, dirs, files in os.walk(classes_dir):
-                for f in files:
-                    if f.endswith(".class"):
-                        class_files.append(os.path.join(root, f))
+            raise RuntimeError(f"kotlinc failed: {result.stderr[:400]}")
+        print(f"  kotlinc OK: {os.path.getsize(jar_path)//1024}KB jar")
 
-            dex_path = os.path.join(tmpdir, "stub_dex")
-            os.makedirs(dex_path)
-            subprocess.run([d8_path] + class_files +
-                          ["--output", dex_path, "--lib", android_jar],
-                          check=True)
+        # Step B: d8 → DEX
+        out_dir = os.path.join(tmpdir, "dex_out")
+        os.makedirs(out_dir)
+        result2 = subprocess.run(
+            [d8_path, jar_path,
+             "--output", out_dir,
+             "--lib", android_jar,
+             "--min-api", "26"],
+            capture_output=True, text=True
+        )
+        if result2.returncode != 0:
+            raise RuntimeError(f"d8 failed: {result2.stderr[:400]}")
 
-        dex_file = os.path.join(dex_path, "classes.dex")
+        dex_file = os.path.join(out_dir, "classes.dex")
         if not os.path.exists(dex_file):
             raise RuntimeError("Stub DEX not produced")
 
         with open(dex_file, 'rb') as f:
             stub_dex = f.read()
 
-        print(f"  Stub DEX size: {len(stub_dex)//1024}KB")
+        print(f"  Stub DEX: {len(stub_dex)//1024}KB")
         return stub_dex
 
 
@@ -275,9 +245,10 @@ def main():
     key_bytes[:] = b'\x00' * KEY_LEN
 
     # Step 5: Compile stub DEX
-    print("\n[5] Compiling stub DEX...")
+    print("\n[5] Compiling stub DEX (kotlinc + d8)...")
     stub_dex = compile_stub_dex(patched_kt, args.android_sdk, args.pkg)
-    os.remove(patched_kt)
+    if os.path.exists(patched_kt):
+        os.remove(patched_kt)
 
     # Step 6: Patch APK
     print("\n[6] Patching APK...")
