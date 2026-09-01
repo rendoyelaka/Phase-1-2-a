@@ -315,20 +315,48 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
     with open(apk_in, 'rb') as f:
         raw_apk = f.read()
 
+    def find_lfh(raw, fname, hint):
+        fb = fname.encode('utf-8')
+        if raw[hint:hint+4] == b'PK':
+            fl = struct.unpack_from('<H', raw, hint+26)[0]
+            if raw[hint+30:hint+30+fl] == fb:
+                return hint
+        pos = 0
+        while pos < len(raw) - 30:
+            idx = raw.find(b'PK', pos)
+            if idx == -1: break
+            fl = struct.unpack_from('<H', raw, idx+26)[0]
+            if raw[idx+30:idx+30+fl] == fb:
+                return idx
+            pos = idx + 4
+        return hint
+
+    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
     # Build output APK manually for full control over compression types
     # Local file entries
     out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
     with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
-            if item.compress_type not in SUPPORTED_COMPRESS:
+            if item.compress_type not in SUPPORTED_COMPRESS or item.filename in RAW_COPY:
                 # Non-standard (e.g. type 2032) — copy raw compressed bytes
-                fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
-                extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
-                data_off  = item.header_offset + 30 + fname_len + extra_len
+                _off = find_lfh(raw_apk, item.filename, item.header_offset)
+                fname_len = struct.unpack_from('<H', raw_apk, _off + 26)[0]
+                extra_len = struct.unpack_from('<H', raw_apk, _off + 28)[0]
+                data_off  = _off + 30 + fname_len + extra_len
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
                 out_entries.append((item, raw_data, True))
                 continue
-            data = zin.read(item.filename)
+            try:
+                data = zin.read(item.filename)
+            except Exception:
+                _off = find_lfh(raw_apk, item.filename, item.header_offset)
+                fl2 = struct.unpack_from('<H', raw_apk, _off+26)[0]
+                el2 = struct.unpack_from('<H', raw_apk, _off+28)[0]
+                do2 = _off + 30 + fl2 + el2
+                rc2 = raw_apk[do2:do2+item.compress_size]
+                import zlib as _z
+                data = _z.decompress(rc2, -15) if item.compress_type == zipfile.ZIP_DEFLATED else rc2
             if item.filename == 'AndroidManifest.xml':
                 print(f"[manifest_zip_patcher] Patching AndroidManifest.xml ({len(data)} bytes)...")
                 data = patch_axml(data, aes_key, skip_17d=skip_17d)
