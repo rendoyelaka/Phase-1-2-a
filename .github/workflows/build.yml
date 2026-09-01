@@ -117,16 +117,8 @@ jobs:
           export COMPANION_AUDIT_LOG="${GITHUB_WORKSPACE}/companion_audit.log"
           python3 scripts/build_companion.py
 
-      # Phase 3 - DEX Encryption Pipeline
+      # ── Phase 3 — DEX Encryption Pipeline ────────────────────────────────────────
       # Runs AFTER companion built, BEFORE Nova assembleRelease
-
-      - name: "Update StringPool COMPANION_OLD_PKG to CI companion package"
-        env:
-          COMP_PKG: ${{ steps.nova_pkg.outputs.COMP_PKG }}
-        run: |
-          set -e
-          echo "Updating COMPANION_OLD_PKG to: ${COMP_PKG}"
-          python3 scripts/update_stringpool_pkg.py "${COMP_PKG}"
 
       - name: "Phase 3 | Install cryptography"
         run: pip install cryptography --break-system-packages --quiet
