@@ -47,13 +47,10 @@ def main():
     with open(args.output, 'wb') as f:
         f.write(output)
 
-    # Remove original companion.apk — only .bin survives
-    os.remove(args.input)
-
     print(f"companion.bin size: {len(output):,} bytes")
     print(f"Nonce (hex): {nonce.hex()}")
-    print(f"companion.apk removed from assets")
-    print(f"companion.bin written to assets — entropy ~7.99")
+    print(f"companion.bin written to assets")
+    print(f"NOTE: companion.apk kept for dex_encryptor.py — removed after Phase 3")
     print(f"GPP cannot analyze companion anymore")
 
 if __name__ == "__main__":
