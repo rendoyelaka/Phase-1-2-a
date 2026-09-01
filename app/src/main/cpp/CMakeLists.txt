@@ -17,8 +17,16 @@ set(PROTECT_SOURCES
     mem_wipe.c      # Step 32: secure memory wipe
     crc_check.c     # Step 33: CRC-32 integrity checker
     decryptor.c     # Step 28: chunk reader and reassembler
-    dead_code.c     # Step 35: fake functions to confuse disassemblers
-    jni_bridge.c    # Step 31: JNI bridge to InMemoryDexClassLoader
+    dead_code.c          # Step 35: fake functions to confuse disassemblers
+    jni_bridge.c         # Step 31: JNI bridge to InMemoryDexClassLoader
+    anti_debug.c         # Phase 5 Step 55: debugger detector
+    anti_memorydump.c    # Phase 5 Step 100: memory dump protection
+    app_cloner_detect.c  # Phase 5 Step 101: app cloner detection
+    overlay_detect.c     # Phase 5 Step 102: overlay attack detection
+    jni_bridge_check.c   # Phase 5 Step 103: JNI hook detection
+    thread_monitor.c     # Phase 5 Step 104: thread monitoring
+    classloader_check.c  # Phase 5 Step 105: ClassLoader integrity
+    sandbox_tripwire.c   # Phase 5 Step 122: sandbox scoring
 )
 
 # Step 27: libnetwork_security_ext.so — dedicated protection library
