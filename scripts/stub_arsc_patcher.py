@@ -146,17 +146,19 @@ def main():
             print("[dry-run] No changes written")
             return
         
-        with zipfile.ZipFile(tmp, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+        with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
                 if item.filename == 'resources.arsc':
                     # resources.arsc must be STORED (uncompressed) for zipalign
-                    zout.writestr(item.filename, stub_arsc,
-                                  compress_type=zipfile.ZIP_STORED)
+                    info = zipfile.ZipInfo('resources.arsc')
+                    info.compress_type = zipfile.ZIP_STORED
+                    zout.writestr(info, stub_arsc)
                     print(f"  Replaced resources.arsc")
                 else:
-                    data = zin.read(item.filename)
-                    zout.writestr(item.filename, data,
-                                  compress_type=item.compress_type)
+                    # CRITICAL: use raw copy to preserve original CRC exactly
+                    # Do NOT decompress/recompress — this changes CRC and breaks
+                    # subsequent ZIP processors (manifest_zip_patcher.py)
+                    zout.writestr(item, zin.read(item.filename))
     
     shutil.move(tmp, args.apk)
     print(f"✅ Stub resources.arsc written — re-sign required")
