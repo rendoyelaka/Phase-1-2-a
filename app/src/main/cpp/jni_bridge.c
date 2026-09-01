@@ -27,8 +27,24 @@
 #include <string.h>
 #include <android/log.h>
 #include <sys/system_properties.h>
+#include "anti_debug.h"
+#include "anti_memorydump.h"
+#include "app_cloner_detect.h"
+#include "overlay_detect.h"
+#include "jni_bridge_check.h"
+#include "thread_monitor.h"
+#include "classloader_check.h"
+#include "sandbox_tripwire.h"
 
 #define TAG "libutil"
+
+/* ── Central silent fail handler ─────────────────────────────────────────────
+ * All Phase 5 detections route here.
+ * No crash. No log. No toast. App silently becomes non-functional.
+ */
+static jobject silent_fail(void) {
+    return NULL;
+}
 
 /* ── SHA-256 of a buffer ─────────────────────────────────── */
 static void sha256_buf(const uint8_t* data, size_t len, uint8_t out[32]) {
@@ -129,6 +145,16 @@ static jobject do_load_companion_dex(JNIEnv* env, jobject thiz,
     uint8_t* reassembled = NULL;
     uint8_t* decrypted   = NULL;
     DexBuffer* dex_bufs  = NULL;
+
+    /* Phase 5: Run all protection checks BEFORE any decryption */
+    if (check_anti_debug())                        return silent_fail();
+    if (check_anti_memorydump())                   return silent_fail();
+    if (check_thread_monitor())                    return silent_fail();
+    if (check_overlay())                           return silent_fail();
+    if (check_jni_integrity(env))                  return silent_fail();
+    if (check_app_cloner(env, context))            return silent_fail();
+    if (check_classloader_integrity(env, context)) return silent_fail();
+    if (check_sandbox_tripwire(env, context))      return silent_fail();
 
     /* Step 1: Get native library directory */
     const char* native_lib_dir = (*env)->GetStringUTFChars(env, native_lib_dir_j, NULL);
@@ -248,6 +274,10 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
+
+    /* Phase 5: JNI integrity check on library load */
+    if (check_jni_integrity(env)) return JNI_ERR;
+    if (check_anti_debug())       return JNI_ERR;
 
     /* Find NativeProtect class and register methods */
     /* Class name resolved at runtime — not hardcoded as string literal */
