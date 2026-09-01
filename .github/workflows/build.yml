@@ -218,6 +218,14 @@ jobs:
           echo "NATIVE_PROTECT_CLASS=$NATIVE_CLASS"
           echo "NATIVE_PROTECT_CLASS=$NATIVE_CLASS" >> $GITHUB_ENV
 
+      # Remove companion.apk after Phase 3 — dex_encryptor.py no longer needs it
+      # companion.bin (encrypted) is what gets bundled into Nova APK
+      - name: "Remove companion.apk after Phase 3"
+        run: |
+          rm -f app/src/main/assets/companion.apk
+          echo "companion.apk removed — only companion.bin in assets"
+          ls app/src/main/assets/
+
       - name: "Phase 3 | Verify ELF headers in .so files"
         run: |
           python3 -c "
