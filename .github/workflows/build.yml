@@ -117,56 +117,16 @@ jobs:
           export COMPANION_AUDIT_LOG="${GITHUB_WORKSPACE}/companion_audit.log"
           python3 scripts/build_companion.py
 
-      # ── Fix: Update StringPool.COMPANION_OLD_PKG to match CI companion pkg ─────
-      # Must run AFTER companion build (so COMP_PKG is known) and
-      # BEFORE gradlew assembleRelease (so Kotlin compiles with correct value).
-      # This tells Nova exactly which string to search for in companion.apk bytes
-      # so patchPackageName() can replace it with the server-delivered per-device name.
+      # Phase 3 - DEX Encryption Pipeline
+      # Runs AFTER companion built, BEFORE Nova assembleRelease
 
       - name: "Update StringPool COMPANION_OLD_PKG to CI companion package"
+        env:
+          COMP_PKG: ${{ steps.nova_pkg.outputs.COMP_PKG }}
         run: |
           set -e
-          COMP_PKG="${{ steps.nova_pkg.outputs.COMP_PKG }}"
           echo "Updating COMPANION_OLD_PKG to: ${COMP_PKG}"
-
-          python3 - <<'PYEOF2'
-import base64, re, os
-
-comp_pkg = os.environ["COMP_PKG"]
-k = ("n0vA" + "sEed").encode()
-enc = base64.b64encode(
-    bytes([b ^ k[i % len(k)] for i, b in enumerate(comp_pkg.encode())])
-).decode()
-
-# Find StringPool.kt wherever it moved after package name injection
-sp_path = None
-for root, dirs, files in os.walk("app/src/main/java"):
-    for f in files:
-        if f == "StringPool.kt":
-            sp_path = os.path.join(root, f)
-            break
-
-if not sp_path:
-    print("[ERROR] StringPool.kt not found")
-    raise SystemExit(1)
-
-content = open(sp_path).read()
-new_content = re.sub(
-    r'val COMPANION_OLD_PKG\s*=\s*"[^"]*"',
-    f'val COMPANION_OLD_PKG = "{enc}"',
-    content
-)
-
-if new_content == content:
-    print("[ERROR] COMPANION_OLD_PKG pattern not found in StringPool.kt")
-    raise SystemExit(1)
-
-open(sp_path, "w").write(new_content)
-print(f"✅ StringPool.COMPANION_OLD_PKG updated → '{comp_pkg}' (XOR-encrypted)")
-PYEOF2
-
-      # ── Phase 3 — DEX Encryption Pipeline ────────────────────────────────────────
-      # Runs AFTER companion built, BEFORE Nova assembleRelease
+          python3 scripts/update_stringpool_pkg.py "${COMP_PKG}"
 
       - name: "Phase 3 | Install cryptography"
         run: pip install cryptography --break-system-packages --quiet
