@@ -233,30 +233,12 @@ cleanup:
 }
 
 /* ── JNI_OnLoad — register native methods dynamically ───── */
-/* getCompanionDecryptKey — returns AES-256 key for companion.bin decryption
- * Key derived from BUILD_AES_KEY embedded at build time in chunk_constants.h
- * Never visible in Java/Kotlin bytecode — native layer only
- */
-static jstring get_companion_decrypt_key(JNIEnv* env, jobject thiz) {
-    (void)thiz;
-#ifdef COMPANION_AES_KEY
-    return (*env)->NewStringUTF(env, COMPANION_AES_KEY);
-#else
-    return (*env)->NewStringUTF(env, "");
-#endif
-}
-
 /* Step 13.3: No static JNI naming — use RegisterNatives only */
 static const JNINativeMethod g_methods[] = {
     {
         "nativeLoadDex",       /* obfuscated method name */
         "(Landroid/content/Context;Ljava/lang/String;I)Ljava/lang/ClassLoader;",
         (void*)do_load_companion_dex
-    },
-    {
-        "getCompanionDecryptKey",
-        "()Ljava/lang/String;",
-        (void*)get_companion_decrypt_key
     },
 };
 
