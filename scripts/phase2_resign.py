@@ -81,6 +81,7 @@ if os.path.isfile(aligned):
 print(f"[phase2_resign] Signing {os.path.basename(APK)} V1+V2+V3")
 r2 = subprocess.run([
     "apksigner","sign",
+    "--min-sdk-version","28",  # prevents apksigner reading minSdk from stub arsc/manifest
     "--ks", KS,
     "--ks-key-alias", ALIAS,
     "--ks-pass", f"pass:{PW}",
