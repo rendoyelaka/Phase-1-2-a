@@ -37,10 +37,6 @@ CLOUDFLARE_IPS = [
     "104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
 ]
 
-    "util","helper","manager","bridge","worker","agent","connect",
-    "stream","cache","store","push","notify","track","secure","auth",
-    "info","user","device","session","config","system","network",
-]
 
 # Socket.IO path mutation options (M4) — all exactly 10 bytes
 M4_PATHS = [
