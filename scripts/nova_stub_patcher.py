@@ -187,7 +187,7 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
     out_path = apk_path + ".stub_patched.apk"
 
     with zipfile.ZipFile(apk_path, 'r') as zin:
-        with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+        with zipfile.ZipFile(out_path, 'w') as zout:  # no default — each entry sets its own
             for item in zin.infolist():
                 if item.filename == STUB_DEX_ASSET:
                     zout.writestr(item.filename, stub_dex,
