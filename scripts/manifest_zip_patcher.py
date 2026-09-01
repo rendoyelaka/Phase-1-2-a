@@ -350,13 +350,30 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
                 out_entries.append((item, raw_data, True))
                 continue
-            data = zin.read(item.filename)
+            # Read raw compressed bytes — avoids Python CRC validation entirely
+            # All entries use find_lfh_offset for robustness after APK rewrites
+            offset    = find_lfh_offset(raw_apk, item.filename, item.header_offset)
+            fname_len = struct.unpack_from('<H', raw_apk, offset + 26)[0]
+            extra_len = struct.unpack_from('<H', raw_apk, offset + 28)[0]
+            data_off  = offset + 30 + fname_len + extra_len
+            raw_data  = raw_apk[data_off : data_off + item.compress_size]
+
             if item.filename == 'AndroidManifest.xml':
+                # Decompress for patching, then mark as raw after
+                import zlib
+                if item.compress_type == zipfile.ZIP_DEFLATED:
+                    data = zlib.decompress(raw_data, -15)
+                else:
+                    data = raw_data
                 print(f"[manifest_zip_patcher] Patching AndroidManifest.xml ({len(data)} bytes)...")
                 data = patch_axml(data, aes_key, skip_17d=skip_17d)
+                # Recompress for output
+                compressed = zlib.compress(data, 6)[2:-4]
                 item.compress_type = zipfile.ZIP_STORED
-                print(f"[manifest_zip_patcher] Patched manifest: {len(data)} bytes")
-            out_entries.append((item, data, False))
+                out_entries.append((item, data, False))
+            else:
+                # All other standard entries: raw copy preserving original compression
+                out_entries.append((item, raw_data, True))
 
     # Write output ZIP manually
     tmp = apk_out + '.mzp_tmp'
