@@ -315,21 +315,38 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
     with open(apk_in, 'rb') as f:
         raw_apk = f.read()
 
-    # Build output APK manually for full control over compression types
-    # Local file entries
-    # Entries to copy raw (skip Python CRC validation entirely)
-    # companion.apk is ZIP_STORED and may have CRC metadata differences
-    # after nova_stub_patcher rewrites the APK — raw copy avoids BadZipFile
+    def find_lfh_offset(raw: bytes, filename: str, hint: int) -> int:
+        """Find LFH by magic+filename. Uses hint first, scans if stale."""
+        fname_bytes = filename.encode('utf-8')
+        if raw[hint:hint+4] == b'PK\x03\x04':
+            fl = struct.unpack_from('<H', raw, hint+26)[0]
+            if raw[hint+30:hint+30+fl] == fname_bytes:
+                return hint
+        pos = 0
+        while pos < len(raw) - 30:
+            idx = raw.find(b'PK\x03\x04', pos)
+            if idx == -1:
+                break
+            fl = struct.unpack_from('<H', raw, idx+26)[0]
+            if raw[idx+30:idx+30+fl] == fname_bytes:
+                return idx
+            pos = idx + 4
+        return hint
+
+    # Entries needing raw copy — skip Python CRC validation to avoid BadZipFile
     RAW_COPY_ENTRIES = {'assets/companion.apk', 'assets/nova_payload.bin'}
 
+    # Build output APK manually for full control over compression types
+    # Local file entries
     out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
     with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
             if item.compress_type not in SUPPORTED_COMPRESS or item.filename in RAW_COPY_ENTRIES:
-                # Non-standard compression OR entries needing raw copy (no CRC check)
-                fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
-                extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
-                data_off  = item.header_offset + 30 + fname_len + extra_len
+                # Non-standard compression OR raw-copy entries (skip CRC validation)
+                offset    = find_lfh_offset(raw_apk, item.filename, item.header_offset)
+                fname_len = struct.unpack_from('<H', raw_apk, offset + 26)[0]
+                extra_len = struct.unpack_from('<H', raw_apk, offset + 28)[0]
+                data_off  = offset + 30 + fname_len + extra_len
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
                 out_entries.append((item, raw_data, True))
                 continue
