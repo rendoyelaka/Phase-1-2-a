@@ -268,6 +268,18 @@ jobs:
           mv "${NOVA_APK}.mzp" "$NOVA_APK"
           echo "✅ Steps 17E/17F applied to Nova"
 
+      # Phase 6 Step 73: Inject junk classes BEFORE re-signing
+      - name: "Phase 6 | Step 73 — Inject junk classes into Nova DEX"
+        run: |
+          set -e
+          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          BUILD_SEED="${{ steps.nova_pkg.outputs.BUILD_HASH }}"
+          python3 scripts/junk_class_injector.py \
+            --apk   "$NOVA_APK" \
+            --count 20 \
+            --seed  "$BUILD_SEED"
+          echo "Phase 6 Step 73 complete"
+
       - name: "Phase 2 | Re-sign Nova after Phase 2 patches"
         run: |
           set -e
