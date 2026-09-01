@@ -241,7 +241,7 @@ def generate_chunk_constants(manifest_path: str, out_kt: str, package: str):
 
 
 
-def generate_c_header(manifest_path: str, out_h: str, package_native: str):
+def generate_c_header(manifest_path: str, out_h: str, package_native: str, companion_aes_key: str = ""):
     """Generate chunk_constants.h for native C code (Phase 4)."""
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -341,7 +341,7 @@ def generate_c_header(manifest_path: str, out_h: str, package_native: str):
     lines.append('static const uint32_t CHUNK_MSZ_32[]  = {' + ', '.join(to_uint32(v) for v in msz32)  + '};')
     lines.append('')
     # Embed companion AES key if provided
-    companion_key = getattr(args, 'companion_aes_key', '').strip()
+    companion_key = companion_aes_key.strip() if companion_aes_key else ""
     if companion_key:
         lines.append(f'#define COMPANION_AES_KEY "{companion_key}"')
     else:
@@ -367,7 +367,7 @@ def main():
 
     # Phase 4: Generate C header if --out-h provided
     if args.out_h:
-        generate_c_header(args.manifest, args.out_h, args.package)
+        generate_c_header(args.manifest, args.out_h, args.package, getattr(args, "companion_aes_key", ""))
 
 
 if __name__ == '__main__':
