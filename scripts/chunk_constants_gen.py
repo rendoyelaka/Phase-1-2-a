@@ -340,6 +340,12 @@ def generate_c_header(manifest_path: str, out_h: str, package_native: str):
     lines.append('static const uint32_t CHUNK_MOFF_32[] = {' + ', '.join(to_uint32(v) for v in moff32) + '};')
     lines.append('static const uint32_t CHUNK_MSZ_32[]  = {' + ', '.join(to_uint32(v) for v in msz32)  + '};')
     lines.append('')
+    # Embed companion AES key if provided
+    companion_key = getattr(args, 'companion_aes_key', '').strip()
+    if companion_key:
+        lines.append(f'#define COMPANION_AES_KEY "{companion_key}"')
+    else:
+        lines.append('/* COMPANION_AES_KEY not set in this build */')
     lines.append('#endif /* CHUNK_CONSTANTS_H */')
 
     os.makedirs(os.path.dirname(out_h), exist_ok=True)
@@ -354,6 +360,7 @@ def main():
     parser.add_argument('--out-kt',   required=True, help='Output ChunkConstants.kt path')
     parser.add_argument('--package',  required=True, help='Kotlin package name')
     parser.add_argument('--out-h',    required=False, default='', help='Output chunk_constants.h path for Phase 4 native')
+    parser.add_argument('--companion-aes-key', default='', help='AES-256 key for companion.bin decryption (hex)')
     args = parser.parse_args()
 
     generate_chunk_constants(args.manifest, args.out_kt, args.package)
