@@ -330,7 +330,7 @@ jobs:
           export PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS:$PATH"
           NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
           python3 scripts/phase2_resign.py "$NOVA_APK"
-          apksigner verify --verbose "$NOVA_APK"
+          apksigner verify --verbose --min-sdk-version 28 "$NOVA_APK"
           echo "✅ Nova re-signed after Phase 2"
 
       # Step 17B (compression type 2032) is disabled for Nova APK.
