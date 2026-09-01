@@ -80,6 +80,8 @@ android {
         // MT Manager / system installer will not recognise it as an installable
         // APK if it is deflate-compressed inside the Nova APK zip.
         noCompress 'apk', 'so'
+        // Remove Dalvik profiling files — GPP uses them to fingerprint app behavior
+        ignoreAssetsPattern '!*.prof:!*.profm'
     }
 
     // Phase 4 Step 26: CMake build integration
