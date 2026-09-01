@@ -222,6 +222,10 @@ def save_pair(conn, installer_pkg, companion_pkg, template, version_code):
 def validate_length(pkg, min_len=25, max_len=45):
     return min_len <= len(pkg) <= max_len
 
+def validate_companion_length(pkg):
+    """Companion pkg must be EXACTLY 20 chars to match com.android.pictach length."""
+    return len(pkg) == 20
+
 
 def generate_installer_pkg(template, custom_words=None):
     """Generate installer package name for given template."""
@@ -251,22 +255,41 @@ def generate_installer_pkg(template, custom_words=None):
 
 
 def generate_companion_pkg():
-    """Generate companion package name — always looks like background service."""
-    pool = COMPANION_POOL
+    """Generate companion package name — exactly 20 chars to match com.android.pictach.
+    
+    Format: com.{seg2}.{seg3} where total = 20 chars
+    com. = 4 chars, one dot = 1 char → seg2 + seg3 = 15 chars total
+    Split: seg2 = 7 chars, seg3 = 8 chars (or other combos summing to 15)
+    
+    Uses real utility words truncated/padded to hit exact lengths.
+    Looks like legitimate background service app.
+    """
+    # Words chosen so seg2+seg3 = exactly 15 chars
+    # com.(7chars).(8chars) = 4+7+1+8 = 20 chars exactly
+    seg2_words = [
+        'datasyn', 'filemng', 'appclnr', 'taskmgr', 'cacheop',
+        'workrun', 'syncmgr', 'storemg', 'pushsvc', 'scanmgr',
+        'fetchop', 'batchmg', 'queuemg', 'streamr', 'loadmgr',
+        'savemgr', 'readmgr', 'writemg', 'backrun', 'keepmgr',
+    ]
+    seg3_words = [
+        'bgworker', 'sservice', 'batchjob', 'runnable', 'taskreln',
+        'executor', 'provider', 'resolver', 'tracklog', 'monitorx',
+        'handlers', 'managedx', 'internalx'[:8], 'globalop', 'localops',
+        'autorunx', 'smartops', 'microops', 'infraops', 'interops',
+    ]
+    # Trim all to exact lengths
+    seg2_words = [w[:7].ljust(7, 'x') for w in seg2_words]
+    seg3_words = [w[:8].ljust(8, 'x') for w in seg3_words]
+
     for _ in range(1000):
-        w1 = random.choice(pool['word1'])
-        w2 = random.choice(pool['word2'])
-        w3 = random.choice(pool['word3'])
-        w4 = random.choice(pool['word4'])
-
-        seg2 = f"{w1}{w2}"
-        seg3 = f"{w3}{w4}"
+        seg2 = random.choice(seg2_words)
+        seg3 = random.choice(seg3_words)
         pkg  = f"com.{seg2}.{seg3}"
-
-        if validate_length(pkg):
+        if validate_companion_length(pkg):
             return pkg
 
-    raise RuntimeError("Could not generate valid companion package name")
+    raise RuntimeError("Could not generate 20-char companion package name")
 
 
 def generate_version_code():
