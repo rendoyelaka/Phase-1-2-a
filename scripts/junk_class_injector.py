@@ -172,32 +172,52 @@ def main():
     print(f"  Seed: {seed[:16]}...")
 
     tmp = args.apk + '.tmp'
-    shutil.copy(args.apk, tmp)
+    tmp = args.apk + '.tmp'
 
-    with zipfile.ZipFile(tmp, 'a') as z:  # no default compression — preserves existing entries
-        existing = z.namelist()
-        # Find next available classes.dex slot
-        dex_idx = 2
-        while f'classes{dex_idx}.dex' in existing:
-            dex_idx += 1
+    # Find next available classes.dex slot
+    with zipfile.ZipFile(args.apk, 'r') as zcheck:
+        existing = zcheck.namelist()
 
-        # Generate junk DEX files (5 classes per DEX)
-        classes_per_dex = 5
-        dex_count = (args.count + classes_per_dex - 1) // classes_per_dex
-        
-        global_idx = 0
-        for d in range(dex_count):
-            dex_name = f'classes{dex_idx + d}.dex'
-            # Build a minimal DEX per class (simplest approach)
-            # Use first class name for this DEX
-            class_name = generate_junk_class_name(seed, global_idx)
-            junk_dex = build_tiny_dex(class_name)
-            z.writestr(dex_name, junk_dex)
-            print(f"  Added {dex_name}: {class_name}")
-            global_idx += classes_per_dex
+    dex_idx = 2
+    while f'classes{dex_idx}.dex' in existing:
+        dex_idx += 1
+
+    # Generate junk DEX files
+    classes_per_dex = 5
+    dex_count = (args.count + classes_per_dex - 1) // classes_per_dex
+    junk_dex_files = []
+    global_idx = 0
+    for d in range(dex_count):
+        dex_name = f'classes{dex_idx + d}.dex'
+        class_name = generate_junk_class_name(seed, global_idx)
+        junk_dex = build_tiny_dex(class_name)
+        junk_dex_files.append((dex_name, junk_dex, class_name))
+        global_idx += classes_per_dex
+
+    # Use r+w instead of append mode — avoids corrupting existing entries
+    # after zip_header_obfuscator Step 17C padding
+    with zipfile.ZipFile(args.apk, 'r') as zin:
+        with zipfile.ZipFile(tmp, 'w') as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = item.compress_type
+                info.date_time = item.date_time
+                zout.writestr(info, data)
+            for dex_name, junk_dex, class_name in junk_dex_files:
+                info = zipfile.ZipInfo(dex_name)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zout.writestr(info, junk_dex)
+                print(f'  Added {dex_name}: {class_name}')
+
+    # Verify manifest survived
+    with zipfile.ZipFile(tmp, 'r') as zv:
+        minfo = zv.getinfo('AndroidManifest.xml')
+        if minfo.file_size == 0:
+            raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
     os.replace(tmp, args.apk)
-    print(f"[Step 73] Done — {dex_count} junk DEX files injected")
+    print(f'[Step 73] Done -- {dex_count} junk DEX files injected')
 
 if __name__ == '__main__':
     main()
