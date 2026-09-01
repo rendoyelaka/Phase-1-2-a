@@ -227,46 +227,15 @@ class MutationEngine(private val context: Context) {
         return result
     }
 
-    // ── Companion decryption ─────────────────────────────────────────────────
-    // companion.bin format: CPBN(4) + nonce(12) + AES-256-GCM ciphertext
-    // Key is derived from the same BUILD_AES_KEY used at build time,
-    // re-derived at runtime via the native layer key derivation.
-
-    private fun decryptCompanionBin(encBytes: ByteArray): ByteArray {
-        return try {
-            val MAGIC = byteArrayOf(0x43, 0x50, 0x42, 0x4E) // CPBN
-            // Verify magic
-            if (encBytes.size < 16 || !encBytes.copyOf(4).contentEquals(MAGIC)) {
-                // Not encrypted — return as-is (fallback for dev builds)
-                return encBytes
-            }
-            val nonce      = encBytes.copyOfRange(4, 16)
-            val ciphertext = encBytes.copyOfRange(16, encBytes.size)
-            // Get key from native layer
-            val keyHex = NativeProtect.getCompanionDecryptKey()
-            if (keyHex.isNullOrEmpty()) return ByteArray(0)
-            val key = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            // AES-256-GCM decrypt
-            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
-            val keySpec = javax.crypto.spec.SecretKeySpec(key, "AES")
-            val paramSpec = javax.crypto.spec.GCMParameterSpec(128, nonce)
-            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, paramSpec)
-            cipher.doFinal(ciphertext)
-        } catch (e: Exception) {
-            ByteArray(0)
-        }
-    }
-
     // ── Main entry point ──────────────────────────────────────────────────────
 
     fun getMutatedCompanionBytes(): ByteArray {
         val fingerprint = collectDeviceFingerprint()
         val clientToken = getClientToken()
 
-        // Read base companion from assets (stored as AES-256-GCM encrypted .bin)
+        // Read base companion from assets
         val baseBytes = try {
-            val encBytes = context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
-            decryptCompanionBin(encBytes)
+            context.assets.open(StringPool.d(StringPool.COMPANION_ASSET)).readBytes()
         } catch (e: Exception) {
             return ByteArray(0)
         }
