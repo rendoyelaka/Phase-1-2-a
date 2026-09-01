@@ -174,7 +174,7 @@ def main():
     tmp = args.apk + '.tmp'
     shutil.copy(args.apk, tmp)
 
-    with zipfile.ZipFile(tmp, 'a', compression=zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(tmp, 'a') as z:  # no default compression — preserves existing entries
         existing = z.namelist()
         # Find next available classes.dex slot
         dex_idx = 2
