@@ -8,7 +8,7 @@ internal object StringPool {
     private val k1 = "n0vA"
     private val k2 = "sEed"
 
-    val COMPANION_ASSET = "DV8bMRIrDAsAHhQoHQ=="
+    val COMPANION_ASSET = "DV8bMRIrDAsAHhcxGA=="
     val TMP_COMPANION = "Gl0GHhAqCBQPXh8uHWsEFAU="
     val CACHED_COMPANION = "DV8bMRIrDAsAbxUgEC0AAEBRBio="
     val WRITE_NAME = "G0ASIAcgSxQFVw=="
