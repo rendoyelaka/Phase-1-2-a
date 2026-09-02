@@ -246,9 +246,26 @@ def main():
                 zout.writestr(info, junk_dex)
                 print(f"  Added {dex_name}: {class_name}")
 
-    # Verify manifest
+    # Verify manifest — with debug output
     with zipfile.ZipFile(tmp, 'r') as zv:
         mi = zv.getinfo('AndroidManifest.xml')
+        print(f"[DEBUG] AndroidManifest.xml in output:")
+        print(f"  compress_size={mi.compress_size} file_size={mi.file_size} compress_type={mi.compress_type} flag_bits=0x{mi.flag_bits:04x}")
+        # Also check what find_lfh found in input APK
+        off_dbg = find_lfh(raw_apk, 'AndroidManifest.xml', 0)
+        lf_cs_dbg = _st.unpack_from('<I', raw_apk, off_dbg+18)[0]
+        lf_us_dbg = _st.unpack_from('<I', raw_apk, off_dbg+22)[0]
+        fl_dbg = _st.unpack_from('<H', raw_apk, off_dbg+26)[0]
+        el_dbg = _st.unpack_from('<H', raw_apk, off_dbg+28)[0]
+        fname_dbg = raw_apk[off_dbg+30:off_dbg+30+fl_dbg].decode('utf-8', errors='replace')
+        print(f"[DEBUG] find_lfh(hint=0) found: offset={off_dbg} fname={repr(fname_dbg)} lf_cs={lf_cs_dbg} lf_us={lf_us_dbg}")
+        # Also check using CDH hint
+        with zipfile.ZipFile(args.apk, 'r') as zin2:
+            mi2 = zin2.getinfo('AndroidManifest.xml')
+        off_h = find_lfh(raw_apk, 'AndroidManifest.xml', mi2.header_offset)
+        lf_cs_h = _st.unpack_from('<I', raw_apk, off_h+18)[0]
+        fname_h = raw_apk[off_h+30:off_h+30+_st.unpack_from('<H', raw_apk, off_h+26)[0]].decode('utf-8', errors='replace')
+        print(f"[DEBUG] find_lfh(hint={mi2.header_offset}) found: offset={off_h} fname={repr(fname_h)} lf_cs={lf_cs_h}")
         if mi.file_size == 0:
             raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
