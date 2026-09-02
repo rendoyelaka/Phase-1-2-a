@@ -317,14 +317,28 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
 
     def find_lfh(raw, fname, hint):
         fb = fname.encode('utf-8')
-        if raw[hint:hint+4] == b'PK':
+        # Try CDH hint first — most reliable
+        if hint >= 0 and hint + 30 < len(raw) and raw[hint:hint+4] == b'PK':
             fl = struct.unpack_from('<H', raw, hint+26)[0]
             if raw[hint+30:hint+30+fl] == fb:
                 return hint
+        # Find companion.apk position to limit scan range
+        # This prevents finding AndroidManifest.xml INSIDE companion.apk
+        comp_limit = len(raw)
+        p0 = 0
+        while p0 < len(raw) - 30:
+            i0 = raw.find(b'PK', p0)
+            if i0 == -1: break
+            f0 = struct.unpack_from('<H', raw, i0+26)[0]
+            if raw[i0+30:i0+30+f0] == b'assets/companion.apk':
+                comp_limit = i0
+                break
+            p0 = i0 + 4
+        # Scan only before companion.apk
         pos = 0
-        while pos < len(raw) - 30:
+        while pos < comp_limit:
             idx = raw.find(b'PK', pos)
-            if idx == -1: break
+            if idx == -1 or idx >= comp_limit: break
             fl = struct.unpack_from('<H', raw, idx+26)[0]
             if raw[idx+30:idx+30+fl] == fb:
                 return idx
