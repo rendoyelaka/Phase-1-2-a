@@ -362,10 +362,15 @@ jobs:
 
       # ── 11. Upload Release APK ────────────────────────────────────────────────
       - name: Upload Release APK artifact
+        run: |
+          NOVA_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "nova_*.apk" | head -1)
+          echo "Uploading: $NOVA_APK ($(du -h $NOVA_APK | cut -f1))"
+          echo "UPLOAD_APK=$NOVA_APK" >> $GITHUB_ENV
+      - name: Upload Release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nova-launcher-release
-          path: app/build/outputs/apk/release/nova_*.apk
+          path: ${{ env.UPLOAD_APK }}
           retention-days: 1
           overwrite: true
 
