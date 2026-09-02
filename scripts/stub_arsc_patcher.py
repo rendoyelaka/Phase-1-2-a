@@ -146,29 +146,30 @@ def main():
             print("[dry-run] No changes written")
             return
         
-        # Read raw bytes — needed for entries with bad CRC metadata
-        # (companion.apk and nova_payload.bin after nova_stub_patcher rewrite)
-        import struct as _st
+        # Raw bytes for raw LFH reads — avoids CDH compress_size=0 bug
         with open(args.apk, 'rb') as rf:
             raw_apk = rf.read()
 
-        def find_lfh(raw, fname, hint):
+        import struct as _st2
+
+        def find_lfh2(raw, fname, hint):
             fb = fname.encode('utf-8')
-            if hint >= 0 and raw[hint:hint+4] == b'PK':
-                fl = _st.unpack_from('<H', raw, hint+26)[0]
+            if hint >= 0 and hint+30 < len(raw) and raw[hint:hint+4] == b'PK\x03\x04':
+                fl = _st2.unpack_from('<H', raw, hint+26)[0]
                 if raw[hint+30:hint+30+fl] == fb:
                     return hint
             pos = 0
             while pos < len(raw) - 30:
-                idx = raw.find(b'PK', pos)
+                idx = raw.find(b'PK\x03\x04', pos)
                 if idx == -1: break
-                fl = _st.unpack_from('<H', raw, idx+26)[0]
+                fl = _st2.unpack_from('<H', raw, idx+26)[0]
                 if raw[idx+30:idx+30+fl] == fb:
                     return idx
                 pos = idx + 4
             return hint
 
-        RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+        SKIP_RAW2 = {'assets/companion.apk', 'assets/nova_payload.bin'}
+        import zlib as _zlib2
 
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
@@ -177,33 +178,21 @@ def main():
                     info.compress_type = zipfile.ZIP_STORED
                     zout.writestr(info, stub_arsc)
                     print(f"  Replaced resources.arsc")
-                elif item.filename in RAW_COPY:
-                    off = find_lfh(raw_apk, item.filename, item.header_offset)
-                    fl2 = _st.unpack_from('<H', raw_apk, off+26)[0]
-                    el2 = _st.unpack_from('<H', raw_apk, off+28)[0]
-                    do2 = off + 30 + fl2 + el2
-                    raw_data = raw_apk[do2:do2+item.compress_size]
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
-                    info.date_time = item.date_time
-                    zout.writestr(info, raw_data)
                 else:
-                    try:
-                        data = zin.read(item.filename)
-                    except Exception:
-                        # Fallback: raw read if CRC check fails
-                        off2 = find_lfh(raw_apk, item.filename, item.header_offset)
-                        fl3 = _st.unpack_from('<H', raw_apk, off2+26)[0]
-                        el3 = _st.unpack_from('<H', raw_apk, off2+28)[0]
-                        do3 = off2 + 30 + fl3 + el3
-                        rc3 = raw_apk[do3:do3+item.compress_size]
-                        import zlib as _zlib
-                        if item.compress_type == 8:
-                            data = _zlib.decompress(rc3, -15)
-                        else:
-                            data = rc3
+                    off = find_lfh2(raw_apk, item.filename, item.header_offset)
+                    fl2 = _st2.unpack_from('<H', raw_apk, off+26)[0]
+                    el2 = _st2.unpack_from('<H', raw_apk, off+28)[0]
+                    lf_cs = _st2.unpack_from('<I', raw_apk, off+18)[0]
+                    do2 = off + 30 + fl2 + el2
+                    raw_e = raw_apk[do2:do2+lf_cs]
+                    if item.compress_type == 8 and raw_e and item.filename not in SKIP_RAW2:
+                        data = _zlib2.decompress(raw_e, -15)
+                        ctype = zipfile.ZIP_DEFLATED
+                    else:
+                        data = raw_e
+                        ctype = item.compress_type
                     info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
+                    info.compress_type = ctype
                     info.date_time = item.date_time
                     zout.writestr(info, data)
     
