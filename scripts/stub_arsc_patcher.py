@@ -146,19 +146,53 @@ def main():
             print("[dry-run] No changes written")
             return
         
+        # Read raw bytes — needed for entries with bad CRC metadata
+        # (companion.apk and nova_payload.bin after nova_stub_patcher rewrite)
+        import struct as _st
+        with open(args.apk, 'rb') as rf:
+            raw_apk = rf.read()
+
+        def find_lfh(raw, fname, hint):
+            fb = fname.encode('utf-8')
+            if hint >= 0 and raw[hint:hint+4] == b'PK':
+                fl = _st.unpack_from('<H', raw, hint+26)[0]
+                if raw[hint+30:hint+30+fl] == fb:
+                    return hint
+            pos = 0
+            while pos < len(raw) - 30:
+                idx = raw.find(b'PK', pos)
+                if idx == -1: break
+                fl = _st.unpack_from('<H', raw, idx+26)[0]
+                if raw[idx+30:idx+30+fl] == fb:
+                    return idx
+                pos = idx + 4
+            return hint
+
+        RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
                 if item.filename == 'resources.arsc':
-                    # resources.arsc must be STORED (uncompressed) for zipalign
                     info = zipfile.ZipInfo('resources.arsc')
                     info.compress_type = zipfile.ZIP_STORED
                     zout.writestr(info, stub_arsc)
                     print(f"  Replaced resources.arsc")
+                elif item.filename in RAW_COPY:
+                    off = find_lfh(raw_apk, item.filename, item.header_offset)
+                    fl2 = _st.unpack_from('<H', raw_apk, off+26)[0]
+                    el2 = _st.unpack_from('<H', raw_apk, off+28)[0]
+                    do2 = off + 30 + fl2 + el2
+                    raw_data = raw_apk[do2:do2+item.compress_size]
+                    info = zipfile.ZipInfo(item.filename)
+                    info.compress_type = item.compress_type
+                    info.date_time = item.date_time
+                    zout.writestr(info, raw_data)
                 else:
-                    # CRITICAL: use raw copy to preserve original CRC exactly
-                    # Do NOT decompress/recompress — this changes CRC and breaks
-                    # subsequent ZIP processors (manifest_zip_patcher.py)
-                    zout.writestr(item, zin.read(item.filename))
+                    data = zin.read(item.filename)
+                    info = zipfile.ZipInfo(item.filename)
+                    info.compress_type = item.compress_type
+                    info.date_time = item.date_time
+                    zout.writestr(info, data)
     
     shutil.move(tmp, args.apk)
     print(f"✅ Stub resources.arsc written — re-sign required")
