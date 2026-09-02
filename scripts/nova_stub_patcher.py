@@ -196,16 +196,19 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
                 elif item.filename == PAYLOAD_ASSET:
                     pass
                 else:
-                    # Decompress fully then rewrite — guarantees correct CRC
                     data = zin.read(item.filename)
-                    # AndroidManifest.xml and STORED entries MUST be written as ZIP_STORED
-                    # DEFLATED entries use data descriptor (LFH compress_size=0)
-                    # which causes manifest_zip_patcher to read 0 bytes silently
-                    if item.filename == 'AndroidManifest.xml' or item.compress_type == zipfile.ZIP_STORED:
-                        ct = zipfile.ZIP_STORED
+                    # Use fresh ZipInfo — guarantees correct CRC in LFH + CDH
+                    # Passing filename string to writestr can produce wrong CRC
+                    # for large STORED entries like companion.apk
+                    info = zipfile.ZipInfo(item.filename)
+                    info.date_time = item.date_time
+                    # AndroidManifest.xml always STORED — prevents data descriptor
+                    # DEFLATED → data descriptor → LFH compress_size=0 → zin.read returns 0 bytes
+                    if item.filename == 'AndroidManifest.xml':
+                        info.compress_type = zipfile.ZIP_STORED
                     else:
-                        ct = item.compress_type
-                    zout.writestr(item.filename, data, compress_type=ct)
+                        info.compress_type = item.compress_type
+                    zout.writestr(info, data)
 
             # Add encrypted payload
             zout.writestr(PAYLOAD_ASSET, payload_bytes,
