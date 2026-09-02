@@ -173,37 +173,68 @@ def main():
 
     tmp = args.apk + '.tmp'
 
-    # Read raw APK bytes for entries that have bad CRC after nova_stub_patcher
-    with open(args.apk, 'rb') as rf:
-        raw_apk = rf.read()
+    import struct as _st, zlib as _zlib
 
-    import struct as _st
+    def read_entry_raw(raw, item):
+        """Read entry data directly from raw bytes using CDH header_offset.
+        Bypasses Python zipfile CRC validation and stale offset issues.
+        For DEFLATED entries: decompresses and returns plaintext.
+        For STORED entries: returns raw bytes as-is.
+        """
+        off = item.header_offset
+        # Verify magic at CDH header_offset
+        if raw[off:off+4] != b'PK':
+            # header_offset stale — scan backward from companion.apk start
+            # to find Nova's entries (before companion.apk in file)
+            # Get companion.apk offset to limit scan
+            comp_off = -1
+            for ci in [i for i in range(len(raw)-30) if raw[i:i+4]==b'PK']:
+                fl = _st.unpack_from('<H', raw, ci+26)[0]
+                if raw[ci+30:ci+30+fl] == b'assets/companion.apk':
+                    comp_off = ci
+                    break
+            limit = comp_off if comp_off > 0 else len(raw)//2
+            fb = item.filename.encode('utf-8')
+            found = -1
+            pos = 0
+            while pos < limit:
+                idx = raw.find(b'PK', pos)
+                if idx < 0 or idx >= limit: break
+                fl = _st.unpack_from('<H', raw, idx+26)[0]
+                if raw[idx+30:idx+30+fl] == fb:
+                    found = idx
+                    break
+                pos = idx + 4
+            if found < 0:
+                return None
+            off = found
 
-    # Find entry in raw bytes using CDH hint first, then linear scan
-    # IMPORTANT: scan only in the first 30% of the file to avoid
-    # finding AndroidManifest.xml INSIDE companion.apk
-    def find_lfh_safe(raw, fname, hint, max_scan=None):
-        fb = fname.encode('utf-8')
-        # Try CDH hint first (most reliable)
-        if hint >= 0 and hint + 30 < len(raw) and raw[hint:hint+4] == b'PK':
-            fl = _st.unpack_from('<H', raw, hint+26)[0]
-            if raw[hint+30:hint+30+fl] == fb:
-                return hint
-        # Scan only up to max_scan to avoid nested APK entries
-        scan_limit = max_scan if max_scan else len(raw)
-        pos = 0
-        while pos < scan_limit - 30:
-            idx = raw.find(b'PK', pos)
-            if idx == -1 or idx >= scan_limit: break
-            fl = _st.unpack_from('<H', raw, idx+26)[0]
-            if raw[idx+30:idx+30+fl] == fb:
-                return idx
-            pos = idx + 4
-        return -1
+        fl = _st.unpack_from('<H', raw, off+26)[0]
+        el = _st.unpack_from('<H', raw, off+28)[0]
+        lf_cs = _st.unpack_from('<I', raw, off+18)[0]
+        flags = _st.unpack_from('<H', raw, off+6)[0]
+        do = off + 30 + fl + el
 
-    # Find next available DEX slot
+        if flags & 0x08:
+            # Data descriptor — find actual size after data
+            # Scan forward for PK or next PK
+            dd_sig = b'PK'
+            dd_pos = raw.find(dd_sig, do)
+            if dd_pos > 0:
+                lf_cs = _st.unpack_from('<I', raw, dd_pos+8)[0]
+
+        raw_data = raw[do:do+lf_cs]
+        if item.compress_type == 8 and raw_data:
+            try:
+                return _zlib.decompress(raw_data, -15)
+            except Exception:
+                return raw_data
+        return raw_data
+
+    # Find next DEX slot
     with zipfile.ZipFile(args.apk, 'r') as zcheck:
-        existing = zcheck.namelist()
+        existing_entries = zcheck.infolist()
+        existing = [e.filename for e in existing_entries]
 
     dex_idx = 2
     while f'classes{dex_idx}.dex' in existing:
@@ -221,53 +252,31 @@ def main():
         junk_list.append((dex_name, junk_dex, class_name))
         global_idx += classes_per_dex
 
-    # RAW_COPY: entries with bad CRC after nova_stub_patcher — read raw from LFH
-    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
-    # STORED_WRITE: entries to always write as STORED (avoids data descriptor)
-    STORED_WRITE = {'AndroidManifest.xml'}
-    import zlib as _zlib
+    with open(args.apk, 'rb') as rf:
+        raw_apk = rf.read()
 
-    with zipfile.ZipFile(args.apk, 'r') as zin:
-        with zipfile.ZipFile(tmp, 'w') as zout:
-            for item in zin.infolist():
-                if item.filename in RAW_COPY:
-                    # Raw LFH read — skip CRC validation
-                    off = find_lfh_safe(raw_apk, item.filename, item.header_offset)
-                    if off < 0: off = item.header_offset
-                    fl2 = _st.unpack_from('<H', raw_apk, off+26)[0]
-                    el2 = _st.unpack_from('<H', raw_apk, off+28)[0]
-                    lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
-                    do2 = off + 30 + fl2 + el2
-                    data = raw_apk[do2:do2+lf_cs]
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
-                    info.date_time = item.date_time
-                    zout.writestr(info, data)
-                elif item.filename in STORED_WRITE:
-                    # AndroidManifest.xml: always use zin.read() and write as STORED
-                    # This avoids data descriptor issues and find_lfh ambiguity
-                    data = zin.read(item.filename)
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = zipfile.ZIP_STORED
-                    info.date_time = item.date_time
-                    zout.writestr(info, data)
-                    print(f"  AndroidManifest.xml: {len(data)} bytes (STORED)")
-                else:
-                    data = zin.read(item.filename)
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
-                    info.date_time = item.date_time
-                    zout.writestr(info, data)
-            for dex_name, junk_dex, class_name in junk_list:
-                info = zipfile.ZipInfo(dex_name)
-                info.compress_type = zipfile.ZIP_DEFLATED
-                zout.writestr(info, junk_dex)
-                print(f"  Added {dex_name}: {class_name}")
+    with zipfile.ZipFile(tmp, 'w') as zout:
+        for item in existing_entries:
+            data = read_entry_raw(raw_apk, item)
+            if data is None:
+                raise RuntimeError(f'Could not read entry: {item.filename}')
+            # Always write as STORED to avoid data descriptor issues
+            # manifest_zip_patcher handles compression for AndroidManifest.xml
+            ctype = zipfile.ZIP_STORED if item.compress_type == 0 else zipfile.ZIP_DEFLATED
+            info = zipfile.ZipInfo(item.filename)
+            info.compress_type = ctype
+            info.date_time = item.date_time
+            zout.writestr(info, data)
+        for dex_name, junk_dex, class_name in junk_list:
+            info = zipfile.ZipInfo(dex_name)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(info, junk_dex)
+            print(f"  Added {dex_name}: {class_name}")
 
     # Verify manifest
     with zipfile.ZipFile(tmp, 'r') as zv:
         mi = zv.getinfo('AndroidManifest.xml')
-        print(f"  Manifest in output: {mi.file_size} bytes compress_type={mi.compress_type}")
+        print(f"  Manifest: {mi.file_size} bytes")
         if mi.file_size == 0:
             raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
