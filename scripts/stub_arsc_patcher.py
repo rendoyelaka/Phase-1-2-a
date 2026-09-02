@@ -146,14 +146,6 @@ def main():
             print("[dry-run] No changes written")
             return
         
-        # Read raw bytes for entries with bad CRC after nova_stub_patcher
-        with open(args.apk, 'rb') as rf:
-            raw_apk = rf.read()
-
-        import struct as _st
-
-        RAW_COPY2 = {'assets/companion.apk', 'assets/nova_payload.bin'}
-
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
                 if item.filename == 'resources.arsc':
@@ -161,18 +153,6 @@ def main():
                     info.compress_type = zipfile.ZIP_STORED
                     zout.writestr(info, stub_arsc)
                     print(f"  Replaced resources.arsc")
-                elif item.filename in RAW_COPY2:
-                    # Raw LFH read — skip CRC validation for these entries
-                    off = item.header_offset
-                    fl2 = _st.unpack_from('<H', raw_apk, off+26)[0]
-                    el2 = _st.unpack_from('<H', raw_apk, off+28)[0]
-                    lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
-                    do2 = off + 30 + fl2 + el2
-                    data = raw_apk[do2:do2+lf_cs]
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
-                    info.date_time = item.date_time
-                    zout.writestr(info, data)
                 else:
                     data = zin.read(item.filename)
                     info = zipfile.ZipInfo(item.filename)
