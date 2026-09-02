@@ -174,14 +174,45 @@ def main():
     tmp = args.apk + '.tmp'
     import struct as _st, io as _io, zlib as _zlib
 
-    # Read entire APK into memory — one consistent view of the file
     with open(args.apk, 'rb') as rf:
         raw_apk = rf.read()
 
-    # Open zipfile from memory bytes — avoids file-offset issues after 17C padding
-    zin_mem = zipfile.ZipFile(_io.BytesIO(raw_apk), 'r')
-    all_items = zin_mem.infolist()
-    zin_mem.close()
+    def extract_entry(raw, item):
+        """Extract entry data from raw APK bytes using LFH directly.
+        Handles data descriptors, bad CRC, stale offsets."""
+        off = item.header_offset
+        # Verify LFH magic
+        if raw[off:off+4] != b'PK':
+            return None
+        fl = _st.unpack_from('<H', raw, off+26)[0]
+        el = _st.unpack_from('<H', raw, off+28)[0]
+        flags = _st.unpack_from('<H', raw, off+6)[0]
+        lf_cs = _st.unpack_from('<I', raw, off+18)[0]
+        do = off + 30 + fl + el
+        # Handle data descriptor (flag bit 3): sizes in LFH are 0
+        if lf_cs == 0 and (flags & 0x08):
+            # Find next LFH or data descriptor to get actual compressed size
+            next_pk = raw.find(b'PK', do + 1)
+            while next_pk > 0 and next_pk < len(raw) - 4:
+                sig = raw[next_pk:next_pk+4]
+                if sig in (b'PK', b'PK', b'PK'):
+                    if sig == b'PK':
+                        lf_cs = _st.unpack_from('<I', raw, next_pk+8)[0]
+                    else:
+                        lf_cs = next_pk - do
+                    break
+                next_pk = raw.find(b'PK', next_pk + 1)
+        raw_data = raw[do:do+lf_cs] if lf_cs > 0 else b''
+        if item.compress_type == 8 and raw_data:
+            try:
+                return _zlib.decompress(raw_data, -15), zipfile.ZIP_DEFLATED
+            except Exception:
+                return raw_data, item.compress_type
+        return raw_data, item.compress_type
+
+    # Get entry list from in-memory zip
+    with zipfile.ZipFile(_io.BytesIO(raw_apk), 'r') as zin:
+        all_items = zin.infolist()
 
     existing_names = [e.filename for e in all_items]
     dex_idx = 2
@@ -198,26 +229,16 @@ def main():
         junk_list.append((dex_name, build_tiny_dex(class_name), class_name))
         global_idx += classes_per_dex
 
-    RAW_ENTRIES = {'assets/companion.apk', 'assets/nova_payload.bin'}
-
     with zipfile.ZipFile(tmp, 'w') as zout:
-        # Read all entries from in-memory zipfile — consistent offsets
-        with zipfile.ZipFile(_io.BytesIO(raw_apk), 'r') as zin:
-            for item in all_items:
-                if item.filename in RAW_ENTRIES:
-                    # Raw LFH read — skip CRC check for these entries
-                    off = item.header_offset
-                    fl = _st.unpack_from('<H', raw_apk, off+26)[0]
-                    el = _st.unpack_from('<H', raw_apk, off+28)[0]
-                    lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
-                    do = off + 30 + fl + el
-                    data = raw_apk[do:do+lf_cs]
-                else:
-                    data = zin.read(item.filename)
-                info = zipfile.ZipInfo(item.filename)
-                info.compress_type = item.compress_type
-                info.date_time = item.date_time
-                zout.writestr(info, data)
+        for item in all_items:
+            result = extract_entry(raw_apk, item)
+            if result is None:
+                raise RuntimeError(f'Cannot read entry: {item.filename}')
+            data, ctype = result
+            info = zipfile.ZipInfo(item.filename)
+            info.compress_type = ctype
+            info.date_time = item.date_time
+            zout.writestr(info, data)
         for dex_name, junk_dex, class_name in junk_list:
             info = zipfile.ZipInfo(dex_name)
             info.compress_type = zipfile.ZIP_DEFLATED
