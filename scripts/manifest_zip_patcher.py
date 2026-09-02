@@ -317,21 +317,72 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
 
     # Build output APK manually for full control over compression types
     # Local file entries
-    # Entries to raw-copy — skip CRC validation (bad CRC after nova_stub_patcher rewrites APK)
-    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+    import zlib as _zlib
+
+    def read_lf(raw, item):
+        """Read entry data directly from raw LFH bytes — no CRC check, no offset issues."""
+        off = item.header_offset
+        if off < 0 or off + 30 >= len(raw):
+            return b''
+        # Verify LFH magic
+        if raw[off:off+4] != b'PK':
+            # header_offset stale — scan before companion.apk for this entry
+            comp_limit = len(raw)
+            fb_comp = b'assets/companion.apk'
+            p = 0
+            while p < len(raw) - 30:
+                i = raw.find(b'PK', p)
+                if i < 0: break
+                fl = struct.unpack_from('<H', raw, i+26)[0]
+                if raw[i+30:i+30+fl] == fb_comp:
+                    comp_limit = i
+                    break
+                p = i + 4
+            fb = item.filename.encode('utf-8')
+            p = 0
+            while p < comp_limit:
+                i = raw.find(b'PK', p)
+                if i < 0 or i >= comp_limit: break
+                fl = struct.unpack_from('<H', raw, i+26)[0]
+                if raw[i+30:i+30+fl] == fb:
+                    off = i
+                    break
+                p = i + 4
+            else:
+                return b''
+        fl = struct.unpack_from('<H', raw, off+26)[0]
+        el = struct.unpack_from('<H', raw, off+28)[0]
+        cs = struct.unpack_from('<I', raw, off+18)[0]
+        do = off + 30 + fl + el
+        # Handle data descriptor (flag bit 3): cs=0 in LFH
+        if cs == 0 and struct.unpack_from('<H', raw, off+6)[0] & 0x08:
+            nxt = raw.find(b'PK', do+1)
+            while nxt > 0 and nxt < len(raw)-4:
+                sig = raw[nxt:nxt+4]
+                if sig == b'PK':
+                    cs = struct.unpack_from('<I', raw, nxt+8)[0]; break
+                elif sig in (b'PK', b'PK'):
+                    cs = nxt - do; break
+                nxt = raw.find(b'PK', nxt+1)
+        raw_data = raw[do:do+cs] if cs > 0 else b''
+        if item.compress_type == zipfile.ZIP_DEFLATED and raw_data:
+            try: return _zlib.decompress(raw_data, -15)
+            except: return raw_data
+        return raw_data
 
     out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
     with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
-            if item.compress_type not in SUPPORTED_COMPRESS or item.filename in RAW_COPY:
-                # Non-standard compression OR entries with bad CRC — copy raw compressed bytes
+            if item.compress_type not in SUPPORTED_COMPRESS:
+                # Non-standard (e.g. type 2032) — copy raw compressed bytes
                 fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
                 extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
                 data_off  = item.header_offset + 30 + fname_len + extra_len
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
                 out_entries.append((item, raw_data, True))
                 continue
-            data = zin.read(item.filename)
+            # Read via raw LFH — avoids zin.read() BadZipFile/BadMagic after APK rewrites
+            data = read_lf(raw_apk, item)
             if item.filename == 'AndroidManifest.xml':
                 print(f"[manifest_zip_patcher] Patching AndroidManifest.xml ({len(data)} bytes)...")
                 data = patch_axml(data, aes_key, skip_17d=skip_17d)
