@@ -198,9 +198,10 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
                 else:
                     # Decompress fully then rewrite — guarantees correct CRC
                     data = zin.read(item.filename)
-                    # Force ZIP_STORED for STORED entries — prevents Python data descriptor
-                    # (data descriptor sets LFH compress_size=0, breaking raw reads downstream)
-                    if item.compress_type == zipfile.ZIP_STORED:
+                    # AndroidManifest.xml and STORED entries MUST be written as ZIP_STORED
+                    # DEFLATED entries use data descriptor (LFH compress_size=0)
+                    # which causes manifest_zip_patcher to read 0 bytes silently
+                    if item.filename == 'AndroidManifest.xml' or item.compress_type == zipfile.ZIP_STORED:
                         ct = zipfile.ZIP_STORED
                     else:
                         ct = item.compress_type
