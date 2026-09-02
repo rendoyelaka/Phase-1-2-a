@@ -7,6 +7,7 @@ Must run AFTER R8/ProGuard, BEFORE APK packaging.
 
 Usage: python3 scripts/junk_class_injector.py --apk <apk> --count <N> --seed <hex>
 """
+import struct
 import argparse, os, sys, struct, random, hashlib, zipfile, shutil, tempfile
 
 # Junk class name pools — legitimate-looking names
@@ -196,14 +197,53 @@ def main():
 
     # Use r+w instead of append mode — avoids corrupting existing entries
     # after zip_header_obfuscator Step 17C padding
+    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
+    with open(args.apk, 'rb') as f:
+        raw_apk = f.read()
+
+    def find_lfh(raw, fname, hint):
+        fb = fname.encode('utf-8')
+        if hint >= 0 and hint + 30 < len(raw) and raw[hint:hint+4] == b'PK':
+            fl = struct.unpack_from('<H', raw, hint+26)[0]
+            if raw[hint+30:hint+30+fl] == fb:
+                return hint
+        pos = 0
+        while pos < len(raw) - 30:
+            idx = raw.find(b'PK', pos)
+            if idx == -1: break
+            fl = struct.unpack_from('<H', raw, idx+26)[0]
+            if raw[idx+30:idx+30+fl] == fb:
+                return idx
+            pos = idx + 4
+        return hint
+
     with zipfile.ZipFile(args.apk, 'r') as zin:
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
-                data = zin.read(item.filename)
-                info = zipfile.ZipInfo(item.filename)
-                info.compress_type = item.compress_type
-                info.date_time = item.date_time
-                zout.writestr(info, data)
+                if item.filename in RAW_COPY:
+                    # Raw copy — skip CRC validation for entries with stale metadata
+                    off = find_lfh(raw_apk, item.filename, item.header_offset)
+                    fl = struct.unpack_from('<H', raw_apk, off+26)[0]
+                    el = struct.unpack_from('<H', raw_apk, off+28)[0]
+                    do = off + 30 + fl + el
+                    raw_data = raw_apk[do:do+item.compress_size]
+                    zout.writestr(item, raw_data)
+                else:
+                    try:
+                        data = zin.read(item.filename)
+                    except Exception:
+                        off = find_lfh(raw_apk, item.filename, item.header_offset)
+                        fl = struct.unpack_from('<H', raw_apk, off+26)[0]
+                        el = struct.unpack_from('<H', raw_apk, off+28)[0]
+                        do = off + 30 + fl + el
+                        raw_data = raw_apk[do:do+item.compress_size]
+                        import zlib as _z
+                        data = _z.decompress(raw_data, -15) if item.compress_type == zipfile.ZIP_DEFLATED else raw_data
+                    info = zipfile.ZipInfo(item.filename)
+                    info.compress_type = item.compress_type
+                    info.date_time = item.date_time
+                    zout.writestr(info, data)
             for dex_name, junk_dex, class_name in junk_dex_files:
                 info = zipfile.ZipInfo(dex_name)
                 info.compress_type = zipfile.ZIP_DEFLATED
