@@ -213,7 +213,16 @@ def main():
                     _do  = _off + 30 + _fl + _el
                     _data = _raw[_do:_do+_cs]
                 else:
-                    _data = _zin.read(_item.filename)
+                    try:
+                        _data = _zin.read(_item.filename)
+                    except Exception as _e:
+                        print(f"[ERROR] Failed to read: {_item.filename}")
+                        print(f"  header_offset={_item.header_offset} compress_size={_item.compress_size}")
+                        print(f"  compress_type={_item.compress_type} flag_bits=0x{_item.flag_bits:04x}")
+                        # Check raw bytes at header_offset
+                        _magic = _raw[_item.header_offset:_item.header_offset+4].hex()
+                        print(f"  raw[{_item.header_offset}:+4] = {_magic}")
+                        raise
                 _info = zipfile.ZipInfo(_item.filename)
                 _info.compress_type = _item.compress_type
                 _info.date_time = _item.date_time
