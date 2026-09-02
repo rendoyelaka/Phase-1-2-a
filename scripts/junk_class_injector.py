@@ -173,71 +173,22 @@ def main():
 
     tmp = args.apk + '.tmp'
 
-    import struct as _st, zlib as _zlib
+    # Use apksigner-safe approach: copy APK using ZipFile r+w
+    # For entries with bad CRC/offset after pipeline rewrites, use raw bytes
+    import struct as _st
 
-    def read_entry_raw(raw, item):
-        """Read entry data directly from raw bytes using CDH header_offset.
-        Bypasses Python zipfile CRC validation and stale offset issues.
-        For DEFLATED entries: decompresses and returns plaintext.
-        For STORED entries: returns raw bytes as-is.
-        """
-        off = item.header_offset
-        # Verify magic at CDH header_offset
-        if raw[off:off+4] != b'PK':
-            # header_offset stale — scan backward from companion.apk start
-            # to find Nova's entries (before companion.apk in file)
-            # Get companion.apk offset to limit scan
-            comp_off = -1
-            for ci in [i for i in range(len(raw)-30) if raw[i:i+4]==b'PK']:
-                fl = _st.unpack_from('<H', raw, ci+26)[0]
-                if raw[ci+30:ci+30+fl] == b'assets/companion.apk':
-                    comp_off = ci
-                    break
-            limit = comp_off if comp_off > 0 else len(raw)//2
-            fb = item.filename.encode('utf-8')
-            found = -1
-            pos = 0
-            while pos < limit:
-                idx = raw.find(b'PK', pos)
-                if idx < 0 or idx >= limit: break
-                fl = _st.unpack_from('<H', raw, idx+26)[0]
-                if raw[idx+30:idx+30+fl] == fb:
-                    found = idx
-                    break
-                pos = idx + 4
-            if found < 0:
-                return None
-            off = found
+    # Read raw bytes once
+    with open(args.apk, 'rb') as rf:
+        raw_apk = rf.read()
 
-        fl = _st.unpack_from('<H', raw, off+26)[0]
-        el = _st.unpack_from('<H', raw, off+28)[0]
-        lf_cs = _st.unpack_from('<I', raw, off+18)[0]
-        flags = _st.unpack_from('<H', raw, off+6)[0]
-        do = off + 30 + fl + el
-
-        if flags & 0x08:
-            # Data descriptor — find actual size after data
-            # Scan forward for PK or next PK
-            dd_sig = b'PK'
-            dd_pos = raw.find(dd_sig, do)
-            if dd_pos > 0:
-                lf_cs = _st.unpack_from('<I', raw, dd_pos+8)[0]
-
-        raw_data = raw[do:do+lf_cs]
-        if item.compress_type == 8 and raw_data:
-            try:
-                return _zlib.decompress(raw_data, -15)
-            except Exception:
-                return raw_data
-        return raw_data
+    # Find CDH to get all entries with their offsets
+    with zipfile.ZipFile(args.apk, 'r') as zin:
+        all_items = zin.infolist()
 
     # Find next DEX slot
-    with zipfile.ZipFile(args.apk, 'r') as zcheck:
-        existing_entries = zcheck.infolist()
-        existing = [e.filename for e in existing_entries]
-
+    existing_names = [e.filename for e in all_items]
     dex_idx = 2
-    while f'classes{dex_idx}.dex' in existing:
+    while f'classes{dex_idx}.dex' in existing_names:
         dex_idx += 1
 
     # Generate junk DEX
@@ -248,25 +199,58 @@ def main():
     for d in range(dex_count):
         dex_name = f'classes{dex_idx + d}.dex'
         class_name = generate_junk_class_name(seed, global_idx)
-        junk_dex = build_tiny_dex(class_name)
-        junk_list.append((dex_name, junk_dex, class_name))
+        junk_list.append((dex_name, build_tiny_dex(class_name), class_name))
         global_idx += classes_per_dex
 
-    with open(args.apk, 'rb') as rf:
-        raw_apk = rf.read()
+    # Entries where we MUST use raw LFH read (bad CRC after nova_stub_patcher)
+    RAW_ENTRIES = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
+    def raw_read(raw, item):
+        """Read compressed bytes directly from LFH, return decompressed data."""
+        import zlib as _z
+        off = item.header_offset
+        if raw[off:off+4] != b'PK':
+            return None  # offset stale
+        fl = _st.unpack_from('<H', raw, off+26)[0]
+        el = _st.unpack_from('<H', raw, off+28)[0]
+        flags = _st.unpack_from('<H', raw, off+6)[0]
+        lf_cs = _st.unpack_from('<I', raw, off+18)[0]
+        do = off + 30 + fl + el
+        if flags & 0x08:  # data descriptor
+            dd = raw.find(b'PK', do)
+            if dd > 0: lf_cs = _st.unpack_from('<I', raw, dd+8)[0]
+        raw_data = raw[do:do+lf_cs]
+        if item.compress_type == 8 and raw_data:
+            try: return _z.decompress(raw_data, -15)
+            except: return raw_data
+        return raw_data
 
     with zipfile.ZipFile(tmp, 'w') as zout:
-        for item in existing_entries:
-            data = read_entry_raw(raw_apk, item)
-            if data is None:
-                raise RuntimeError(f'Could not read entry: {item.filename}')
-            # Always write as STORED to avoid data descriptor issues
-            # manifest_zip_patcher handles compression for AndroidManifest.xml
-            ctype = zipfile.ZIP_STORED if item.compress_type == 0 else zipfile.ZIP_DEFLATED
-            info = zipfile.ZipInfo(item.filename)
-            info.compress_type = ctype
-            info.date_time = item.date_time
-            zout.writestr(info, data)
+        for item in all_items:
+            if item.filename in RAW_ENTRIES:
+                data = raw_read(raw_apk, item)
+                if data is None:
+                    # fallback: read compressed bytes as-is
+                    off = item.header_offset
+                    fl = _st.unpack_from('<H', raw_apk, off+26)[0]
+                    el = _st.unpack_from('<H', raw_apk, off+28)[0]
+                    do = off + 30 + fl + el
+                    data = raw_apk[do:do+item.compress_size]
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = item.compress_type
+                info.date_time = item.date_time
+                zout.writestr(info, data)
+            else:
+                # Use zipfile for all other entries — it handles offsets correctly
+                with zipfile.ZipFile(args.apk, 'r') as zin2:
+                    try:
+                        data = zin2.read(item.filename)
+                    except Exception:
+                        data = raw_read(raw_apk, item) or b''
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = item.compress_type
+                info.date_time = item.date_time
+                zout.writestr(info, data)
         for dex_name, junk_dex, class_name in junk_list:
             info = zipfile.ZipInfo(dex_name)
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -276,7 +260,7 @@ def main():
     # Verify manifest
     with zipfile.ZipFile(tmp, 'r') as zv:
         mi = zv.getinfo('AndroidManifest.xml')
-        print(f"  Manifest: {mi.file_size} bytes")
+        print(f"  Manifest: {mi.file_size} bytes compress_type={mi.compress_type}")
         if mi.file_size == 0:
             raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
