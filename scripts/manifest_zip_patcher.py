@@ -315,78 +315,20 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
     with open(apk_in, 'rb') as f:
         raw_apk = f.read()
 
-    def find_lfh(raw, fname, hint):
-        fb = fname.encode('utf-8')
-        if raw[hint:hint+4] == b'PK':
-            fl = struct.unpack_from('<H', raw, hint+26)[0]
-            if raw[hint+30:hint+30+fl] == fb:
-                return hint
-        pos = 0
-        while pos < len(raw) - 30:
-            idx = raw.find(b'PK', pos)
-            if idx == -1: break
-            fl = struct.unpack_from('<H', raw, idx+26)[0]
-            if raw[idx+30:idx+30+fl] == fb:
-                return idx
-            pos = idx + 4
-        return hint
-
-    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
-
-    def read_entry(raw, item):
-        """Read entry data from raw APK using LFH offset.
-        Handles data descriptors (compress_size=0 in LFH).
-        Returns decompressed data for DEFLATED, raw bytes for STORED."""
-        import zlib as _z
-        off = item.header_offset
-        if off < 0 or off + 30 >= len(raw) or raw[off:off+4] != b'PK':
-            return None
-        fl  = struct.unpack_from('<H', raw, off+26)[0]
-        el  = struct.unpack_from('<H', raw, off+28)[0]
-        flg = struct.unpack_from('<H', raw, off+6)[0]
-        lf_cs = struct.unpack_from('<I', raw, off+18)[0]
-        do  = off + 30 + fl + el
-        # Handle data descriptor (flag bit 3): sizes may be 0 in LFH
-        if lf_cs == 0 and (flg & 0x08):
-            # Find next LFH or data descriptor signature
-            nxt = raw.find(b'PK', do + 1)
-            while nxt > 0 and nxt < len(raw) - 4:
-                sig = raw[nxt:nxt+4]
-                if sig == b'PK':
-                    lf_cs = struct.unpack_from('<I', raw, nxt+8)[0]; break
-                elif sig in (b'PK', b'PK'):
-                    lf_cs = nxt - do; break
-                nxt = raw.find(b'PK', nxt+1)
-        raw_data = raw[do:do+lf_cs] if lf_cs > 0 else b''
-        if item.compress_type == zipfile.ZIP_DEFLATED and raw_data:
-            try:
-                return _z.decompress(raw_data, -15)
-            except Exception:
-                return raw_data
-        return raw_data
-
     # Build output APK manually for full control over compression types
     # Local file entries
     out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
     with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
-            if item.compress_type not in SUPPORTED_COMPRESS or item.filename in RAW_COPY:
-                # Non-standard (e.g. type 2032) or RAW_COPY — copy raw compressed bytes
-                _off = find_lfh(raw_apk, item.filename, item.header_offset)
-                fname_len = struct.unpack_from('<H', raw_apk, _off + 26)[0]
-                extra_len = struct.unpack_from('<H', raw_apk, _off + 28)[0]
-                data_off  = _off + 30 + fname_len + extra_len
+            if item.compress_type not in SUPPORTED_COMPRESS:
+                # Non-standard (e.g. type 2032) — copy raw compressed bytes
+                fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
+                extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
+                data_off  = item.header_offset + 30 + fname_len + extra_len
                 raw_data  = raw_apk[data_off : data_off + item.compress_size]
                 out_entries.append((item, raw_data, True))
                 continue
-            # Try normal read first; fall back to raw LFH read if it fails
-            data = None
-            try:
-                data = zin.read(item.filename)
-            except Exception:
-                pass
-            if not data:
-                data = read_entry(raw_apk, item) or b''
+            data = zin.read(item.filename)
             if item.filename == 'AndroidManifest.xml':
                 print(f"[manifest_zip_patcher] Patching AndroidManifest.xml ({len(data)} bytes)...")
                 data = patch_axml(data, aes_key, skip_17d=skip_17d)
