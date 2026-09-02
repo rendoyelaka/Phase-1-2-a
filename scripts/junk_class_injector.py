@@ -172,51 +172,13 @@ def main():
     print(f"  Seed: {seed[:16]}...")
 
     tmp = args.apk + '.tmp'
-    import struct as _st, io as _io, zlib as _zlib
 
-    with open(args.apk, 'rb') as rf:
-        raw_apk = rf.read()
+    # Find next available DEX slot
+    with zipfile.ZipFile(args.apk, 'r') as zcheck:
+        existing = zcheck.namelist()
 
-    def extract_entry(raw, item):
-        """Extract entry data from raw APK bytes using LFH directly.
-        Handles data descriptors, bad CRC, stale offsets."""
-        off = item.header_offset
-        # Verify LFH magic
-        if raw[off:off+4] != b'PK':
-            return None
-        fl = _st.unpack_from('<H', raw, off+26)[0]
-        el = _st.unpack_from('<H', raw, off+28)[0]
-        flags = _st.unpack_from('<H', raw, off+6)[0]
-        lf_cs = _st.unpack_from('<I', raw, off+18)[0]
-        do = off + 30 + fl + el
-        # Handle data descriptor (flag bit 3): sizes in LFH are 0
-        if lf_cs == 0 and (flags & 0x08):
-            # Find next LFH or data descriptor to get actual compressed size
-            next_pk = raw.find(b'PK', do + 1)
-            while next_pk > 0 and next_pk < len(raw) - 4:
-                sig = raw[next_pk:next_pk+4]
-                if sig in (b'PK', b'PK', b'PK'):
-                    if sig == b'PK':
-                        lf_cs = _st.unpack_from('<I', raw, next_pk+8)[0]
-                    else:
-                        lf_cs = next_pk - do
-                    break
-                next_pk = raw.find(b'PK', next_pk + 1)
-        raw_data = raw[do:do+lf_cs] if lf_cs > 0 else b''
-        if item.compress_type == 8 and raw_data:
-            try:
-                return _zlib.decompress(raw_data, -15), zipfile.ZIP_DEFLATED
-            except Exception:
-                return raw_data, item.compress_type
-        return raw_data, item.compress_type
-
-    # Get entry list from in-memory zip
-    with zipfile.ZipFile(_io.BytesIO(raw_apk), 'r') as zin:
-        all_items = zin.infolist()
-
-    existing_names = [e.filename for e in all_items]
     dex_idx = 2
-    while f'classes{dex_idx}.dex' in existing_names:
+    while f'classes{dex_idx}.dex' in existing:
         dex_idx += 1
 
     classes_per_dex = 5
@@ -229,21 +191,21 @@ def main():
         junk_list.append((dex_name, build_tiny_dex(class_name), class_name))
         global_idx += classes_per_dex
 
-    with zipfile.ZipFile(tmp, 'w') as zout:
-        for item in all_items:
-            result = extract_entry(raw_apk, item)
-            if result is None:
-                raise RuntimeError(f'Cannot read entry: {item.filename}')
-            data, ctype = result
-            info = zipfile.ZipInfo(item.filename)
-            info.compress_type = ctype
-            info.date_time = item.date_time
-            zout.writestr(info, data)
-        for dex_name, junk_dex, class_name in junk_list:
-            info = zipfile.ZipInfo(dex_name)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            zout.writestr(info, junk_dex)
-            print(f"  Added {dex_name}: {class_name}")
+    # Simple r+w rewrite — no raw reads needed since nova_stub_patcher
+    # now writes all STORED entries correctly (no data descriptor)
+    with zipfile.ZipFile(args.apk, 'r') as zin:
+        with zipfile.ZipFile(tmp, 'w') as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = item.compress_type
+                info.date_time = item.date_time
+                zout.writestr(info, data)
+            for dex_name, junk_dex, class_name in junk_list:
+                info = zipfile.ZipInfo(dex_name)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zout.writestr(info, junk_dex)
+                print(f"  Added {dex_name}: {class_name}")
 
     with zipfile.ZipFile(tmp, 'r') as zv:
         mi = zv.getinfo('AndroidManifest.xml')
