@@ -2890,7 +2890,7 @@ def step_sign(input_apk: str = None, v1_only: bool = False):
     st    = random.choice(STATES)
     c     = random.choice(COUNTRIES)
     alias = "key_" + secrets.token_hex(6)
-    store_pass = secrets.token_urlsafe(18)
+    store_pass = secrets.token_urlsafe(18).lstrip('-')  # strip leading dash — keytool treats -J as JVM flag
     validity   = random.randint(730, 3650)
     ks_file    = f"companion_ks_{secrets.token_hex(5)}.jks"
 
