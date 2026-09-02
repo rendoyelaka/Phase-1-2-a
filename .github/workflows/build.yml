@@ -363,14 +363,16 @@ jobs:
       # ── 11. Upload Release APK ────────────────────────────────────────────────
       - name: Upload Release APK artifact
         run: |
-          NOVA_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "nova_*.apk" | head -1)
+          # Copy only the final Nova APK to a clean upload directory
+          mkdir -p /tmp/upload_apk
+          NOVA_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "nova_*.apk" | grep -v "stub_patched\|\.obf\|\.mzp" | head -1)
           echo "Uploading: $NOVA_APK ($(du -h $NOVA_APK | cut -f1))"
-          echo "UPLOAD_APK=$NOVA_APK" >> $GITHUB_ENV
+          cp "$NOVA_APK" /tmp/upload_apk/
       - name: Upload Release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nova-launcher-release
-          path: ${{ env.UPLOAD_APK }}
+          path: /tmp/upload_apk/
           retention-days: 1
           overwrite: true
 
