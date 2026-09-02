@@ -197,7 +197,7 @@ def main():
 
     # Use r+w instead of append mode — avoids corrupting existing entries
     # after zip_header_obfuscator Step 17C padding
-    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin', 'AndroidManifest.xml'}
 
     with open(args.apk, 'rb') as f:
         raw_apk = f.read()
