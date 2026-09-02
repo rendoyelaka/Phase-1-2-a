@@ -198,8 +198,11 @@ def patch_apk(apk_path: str, stub_dex: bytes, payload_bytes: bytes) -> str:
                 else:
                     # Decompress fully then rewrite — guarantees correct CRC
                     data = zin.read(item.filename)
-                    zout.writestr(item.filename, data,
-                                  compress_type=item.compress_type)
+                    # AndroidManifest.xml MUST be ZIP_STORED — if written as DEFLATED,
+                    # Python uses data descriptor (LFH compress_size=0) which breaks
+                    # all subsequent raw-byte readers in the pipeline
+                    ct = zipfile.ZIP_STORED if item.filename == 'AndroidManifest.xml' else item.compress_type
+                    zout.writestr(item.filename, data, compress_type=ct)
 
             # Add encrypted payload
             zout.writestr(PAYLOAD_ASSET, payload_bytes,
