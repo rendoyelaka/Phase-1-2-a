@@ -274,15 +274,10 @@ jobs:
       # Strip resources.arsc to minimal stub like IRTC (641B vs 215KB).
       # GPP reads resources.arsc — full arsc reveals all resource strings.
       # Minimal stub keeps only what Android needs to install/launch.
-      - name: "Step 27b | Stub resources.arsc — strip to minimal like IRTC"
+      - name: "Step 27b | Stub resources.arsc — DISABLED (0 bytes reduction, causes offset corruption)"
         run: |
-          set -e
-          NOVA_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          PKG_NAME="${{ steps.nova_pkg.outputs.NOVA_PKG }}"
-          python3 scripts/stub_arsc_patcher.py \
-            --apk "$NOVA_APK" \
-            --pkg "$PKG_NAME"
-          echo "resources.arsc stubbed successfully"
+          echo "Step 27b skipped — resources.arsc stub gives 0 bytes reduction, causes downstream entry offset issues"
+          echo "Will be re-enabled when stub_arsc logic is fixed to preserve entry positions"
 
       - name: "Phase 2 | Steps 17A+17C — ZIP timestamps + padding (Nova)"
         run: |
