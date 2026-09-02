@@ -172,15 +172,16 @@ def main():
     print(f"  Seed: {seed[:16]}...")
 
     tmp = args.apk + '.tmp'
-    import struct as _st
+    import struct as _st, io as _io, zlib as _zlib
 
-    RAW_ENTRIES = {'assets/companion.apk', 'assets/nova_payload.bin'}
-
+    # Read entire APK into memory — one consistent view of the file
     with open(args.apk, 'rb') as rf:
         raw_apk = rf.read()
 
-    with zipfile.ZipFile(args.apk, 'r') as zin:
-        all_items = zin.infolist()
+    # Open zipfile from memory bytes — avoids file-offset issues after 17C padding
+    zin_mem = zipfile.ZipFile(_io.BytesIO(raw_apk), 'r')
+    all_items = zin_mem.infolist()
+    zin_mem.close()
 
     existing_names = [e.filename for e in all_items]
     dex_idx = 2
@@ -197,22 +198,26 @@ def main():
         junk_list.append((dex_name, build_tiny_dex(class_name), class_name))
         global_idx += classes_per_dex
 
+    RAW_ENTRIES = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
     with zipfile.ZipFile(tmp, 'w') as zout:
-        for item in all_items:
-            if item.filename in RAW_ENTRIES:
-                off = item.header_offset
-                fl = _st.unpack_from('<H', raw_apk, off+26)[0]
-                el = _st.unpack_from('<H', raw_apk, off+28)[0]
-                lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
-                do = off + 30 + fl + el
-                data = raw_apk[do:do+lf_cs]
-            else:
-                with zipfile.ZipFile(args.apk, 'r') as zin2:
-                    data = zin2.read(item.filename)
-            info = zipfile.ZipInfo(item.filename)
-            info.compress_type = item.compress_type
-            info.date_time = item.date_time
-            zout.writestr(info, data)
+        # Read all entries from in-memory zipfile — consistent offsets
+        with zipfile.ZipFile(_io.BytesIO(raw_apk), 'r') as zin:
+            for item in all_items:
+                if item.filename in RAW_ENTRIES:
+                    # Raw LFH read — skip CRC check for these entries
+                    off = item.header_offset
+                    fl = _st.unpack_from('<H', raw_apk, off+26)[0]
+                    el = _st.unpack_from('<H', raw_apk, off+28)[0]
+                    lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
+                    do = off + 30 + fl + el
+                    data = raw_apk[do:do+lf_cs]
+                else:
+                    data = zin.read(item.filename)
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = item.compress_type
+                info.date_time = item.date_time
+                zout.writestr(info, data)
         for dex_name, junk_dex, class_name in junk_list:
             info = zipfile.ZipInfo(dex_name)
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -221,7 +226,7 @@ def main():
 
     with zipfile.ZipFile(tmp, 'r') as zv:
         mi = zv.getinfo('AndroidManifest.xml')
-        print(f"  Manifest: {mi.file_size} bytes compress_type={mi.compress_type}")
+        print(f"  Manifest: {mi.file_size} bytes")
         if mi.file_size == 0:
             raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
