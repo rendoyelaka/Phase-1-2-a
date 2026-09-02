@@ -168,7 +168,7 @@ def main():
                 pos = idx + 4
             return hint
 
-        RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+        RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin', 'AndroidManifest.xml'}
 
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
