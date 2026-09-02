@@ -317,11 +317,14 @@ def patch_apk(apk_in: str, apk_out: str, aes_key_hex: str, skip_17d: bool = Fals
 
     # Build output APK manually for full control over compression types
     # Local file entries
+    # Entries to raw-copy — skip CRC validation (bad CRC after nova_stub_patcher rewrites APK)
+    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
+
     out_entries  = []  # list of (ZipInfo, data_bytes, is_raw)
     with zipfile.ZipFile(apk_in, 'r') as zin:
         for item in zin.infolist():
-            if item.compress_type not in SUPPORTED_COMPRESS:
-                # Non-standard (e.g. type 2032) — copy raw compressed bytes
+            if item.compress_type not in SUPPORTED_COMPRESS or item.filename in RAW_COPY:
+                # Non-standard compression OR entries with bad CRC — copy raw compressed bytes
                 fname_len = struct.unpack_from('<H', raw_apk, item.header_offset + 26)[0]
                 extra_len = struct.unpack_from('<H', raw_apk, item.header_offset + 28)[0]
                 data_off  = item.header_offset + 30 + fname_len + extra_len
