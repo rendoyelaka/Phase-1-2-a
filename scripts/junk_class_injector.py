@@ -7,7 +7,6 @@ Must run AFTER R8/ProGuard, BEFORE APK packaging.
 
 Usage: python3 scripts/junk_class_injector.py --apk <apk> --count <N> --seed <hex>
 """
-import struct
 import argparse, os, sys, struct, random, hashlib, zipfile, shutil, tempfile
 
 # Junk class name pools — legitimate-looking names
@@ -173,9 +172,30 @@ def main():
     print(f"  Seed: {seed[:16]}...")
 
     tmp = args.apk + '.tmp'
-    tmp = args.apk + '.tmp'
 
-    # Find next available classes.dex slot
+    # Read ALL bytes from APK — used for raw LFH reads
+    with open(args.apk, 'rb') as rf:
+        raw_apk = rf.read()
+
+    import struct as _st
+
+    def find_lfh(raw, fname, hint):
+        fb = fname.encode('utf-8')
+        if hint >= 0 and hint+30 < len(raw) and raw[hint:hint+4] == b'PK\x03\x04':
+            fl = _st.unpack_from('<H', raw, hint+26)[0]
+            if raw[hint+30:hint+30+fl] == fb:
+                return hint
+        pos = 0
+        while pos < len(raw) - 30:
+            idx = raw.find(b'PK\x03\x04', pos)
+            if idx == -1: break
+            fl = _st.unpack_from('<H', raw, idx+26)[0]
+            if raw[idx+30:idx+30+fl] == fb:
+                return idx
+            pos = idx + 4
+        return hint
+
+    # Find next available DEX slot
     with zipfile.ZipFile(args.apk, 'r') as zcheck:
         existing = zcheck.namelist()
 
@@ -183,81 +203,57 @@ def main():
     while f'classes{dex_idx}.dex' in existing:
         dex_idx += 1
 
-    # Generate junk DEX files
+    # Generate junk DEX
     classes_per_dex = 5
     dex_count = (args.count + classes_per_dex - 1) // classes_per_dex
-    junk_dex_files = []
+    junk_list = []
     global_idx = 0
     for d in range(dex_count):
         dex_name = f'classes{dex_idx + d}.dex'
         class_name = generate_junk_class_name(seed, global_idx)
         junk_dex = build_tiny_dex(class_name)
-        junk_dex_files.append((dex_name, junk_dex, class_name))
+        junk_list.append((dex_name, junk_dex, class_name))
         global_idx += classes_per_dex
 
-    # Use r+w instead of append mode — avoids corrupting existing entries
-    # after zip_header_obfuscator Step 17C padding
-    RAW_COPY = {'assets/companion.apk', 'assets/nova_payload.bin'}
-
-    with open(args.apk, 'rb') as f:
-        raw_apk = f.read()
-
-    def find_lfh(raw, fname, hint):
-        fb = fname.encode('utf-8')
-        if hint >= 0 and hint + 30 < len(raw) and raw[hint:hint+4] == b'PK':
-            fl = struct.unpack_from('<H', raw, hint+26)[0]
-            if raw[hint+30:hint+30+fl] == fb:
-                return hint
-        pos = 0
-        while pos < len(raw) - 30:
-            idx = raw.find(b'PK', pos)
-            if idx == -1: break
-            fl = struct.unpack_from('<H', raw, idx+26)[0]
-            if raw[idx+30:idx+30+fl] == fb:
-                return idx
-            pos = idx + 4
-        return hint
+    # Rewrite APK — always use raw LFH bytes to avoid CDH compress_size=0 bug
+    # nova_stub_patcher can leave compress_size=0 in CDH for some entries
+    # zin.read() silently returns 0 bytes in that case — raw read avoids this
+    SKIP_RAW = {'assets/companion.apk', 'assets/nova_payload.bin'}
+    import zlib as _zlib
 
     with zipfile.ZipFile(args.apk, 'r') as zin:
         with zipfile.ZipFile(tmp, 'w') as zout:
             for item in zin.infolist():
-                if item.filename in RAW_COPY:
-                    # Raw copy — skip CRC validation for entries with stale metadata
-                    off = find_lfh(raw_apk, item.filename, item.header_offset)
-                    fl = struct.unpack_from('<H', raw_apk, off+26)[0]
-                    el = struct.unpack_from('<H', raw_apk, off+28)[0]
-                    do = off + 30 + fl + el
-                    raw_data = raw_apk[do:do+item.compress_size]
-                    zout.writestr(item, raw_data)
+                off = find_lfh(raw_apk, item.filename, item.header_offset)
+                fl2 = _st.unpack_from('<H', raw_apk, off+26)[0]
+                el2 = _st.unpack_from('<H', raw_apk, off+28)[0]
+                lf_cs = _st.unpack_from('<I', raw_apk, off+18)[0]
+                do2 = off + 30 + fl2 + el2
+                raw_entry = raw_apk[do2:do2+lf_cs]
+                if item.compress_type == 8 and raw_entry and item.filename not in SKIP_RAW:
+                    data = _zlib.decompress(raw_entry, -15)
+                    ctype = zipfile.ZIP_DEFLATED
                 else:
-                    try:
-                        data = zin.read(item.filename)
-                    except Exception:
-                        off = find_lfh(raw_apk, item.filename, item.header_offset)
-                        fl = struct.unpack_from('<H', raw_apk, off+26)[0]
-                        el = struct.unpack_from('<H', raw_apk, off+28)[0]
-                        do = off + 30 + fl + el
-                        raw_data = raw_apk[do:do+item.compress_size]
-                        import zlib as _z
-                        data = _z.decompress(raw_data, -15) if item.compress_type == zipfile.ZIP_DEFLATED else raw_data
-                    info = zipfile.ZipInfo(item.filename)
-                    info.compress_type = item.compress_type
-                    info.date_time = item.date_time
-                    zout.writestr(info, data)
-            for dex_name, junk_dex, class_name in junk_dex_files:
+                    data = raw_entry
+                    ctype = item.compress_type
+                info = zipfile.ZipInfo(item.filename)
+                info.compress_type = ctype
+                info.date_time = item.date_time
+                zout.writestr(info, data)
+            for dex_name, junk_dex, class_name in junk_list:
                 info = zipfile.ZipInfo(dex_name)
                 info.compress_type = zipfile.ZIP_DEFLATED
                 zout.writestr(info, junk_dex)
-                print(f'  Added {dex_name}: {class_name}')
+                print(f"  Added {dex_name}: {class_name}")
 
-    # Verify manifest survived
+    # Verify manifest
     with zipfile.ZipFile(tmp, 'r') as zv:
-        minfo = zv.getinfo('AndroidManifest.xml')
-        if minfo.file_size == 0:
+        mi = zv.getinfo('AndroidManifest.xml')
+        if mi.file_size == 0:
             raise RuntimeError('AndroidManifest.xml is 0 bytes after Step 73')
 
     os.replace(tmp, args.apk)
-    print(f'[Step 73] Done -- {dex_count} junk DEX files injected')
+    print(f"[Step 73] Done — {dex_count} junk DEX files injected")
 
 if __name__ == '__main__':
     main()
