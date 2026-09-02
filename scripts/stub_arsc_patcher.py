@@ -188,7 +188,20 @@ def main():
                     info.date_time = item.date_time
                     zout.writestr(info, raw_data)
                 else:
-                    data = zin.read(item.filename)
+                    try:
+                        data = zin.read(item.filename)
+                    except Exception:
+                        # Fallback: raw read if CRC check fails
+                        off2 = find_lfh(raw_apk, item.filename, item.header_offset)
+                        fl3 = _st.unpack_from('<H', raw_apk, off2+26)[0]
+                        el3 = _st.unpack_from('<H', raw_apk, off2+28)[0]
+                        do3 = off2 + 30 + fl3 + el3
+                        rc3 = raw_apk[do3:do3+item.compress_size]
+                        import zlib as _zlib
+                        if item.compress_type == 8:
+                            data = _zlib.decompress(rc3, -15)
+                        else:
+                            data = rc3
                     info = zipfile.ZipInfo(item.filename)
                     info.compress_type = item.compress_type
                     info.date_time = item.date_time
